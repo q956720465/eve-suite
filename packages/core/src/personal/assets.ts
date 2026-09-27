@@ -1,15 +1,15 @@
 import type { DbAdapter } from '../db/types';
 
-import { DEFAULT_VALUATION_REGION_ID } from './networth';
+import { getValuationPrice, valueItems, type ValuationOptions } from '../engines/valuation';
 
 /** 按物品种类聚合的资产行（资产页主表） */
 export interface AssetOverviewRow {
   typeId: number;
   /** 该物品的持有总量 */
   quantity: number;
-  /** 基准区域最低卖价；无报价为 null */
+  /** 估值引擎口径单价（默认吉他 5% 分位）；无报价为 null */
   unitPrice: number | null;
-  /** Σ(数量 × 卖价)，无报价按 0 计 */
+  /** Σ(数量 × 单价)，无报价按 0 计 */
   estimatedValue: number;
   /** 分布在多少个地点 */
   locationCount: number;
@@ -27,39 +27,41 @@ export interface AssetDetailRow {
 
 /**
  * 按物品种类聚合的资产概览（数量合计 + 估值，按估值倒序）。
- * 估值口径同 `computeNetWorth`：基准区域（默认吉他）`market_stats.best_sell`。
+ * 单价与估值统一走估值引擎（默认吉他 5% 分位），与 `computeNetWorth` 同口径。
  */
 export async function getAssetOverview(
   db: DbAdapter,
   characterId: number,
-  regionId: number = DEFAULT_VALUATION_REGION_ID,
+  options: ValuationOptions = {},
 ): Promise<AssetOverviewRow[]> {
-  const rows = await db.select<{
-    typeId: number;
-    quantity: number;
-    unitPrice: number | null;
-    estimatedValue: number;
-    locationCount: number;
-  }>(
-    `SELECT a.type_id AS typeId,
-            SUM(a.quantity) AS quantity,
-            MAX(s.best_sell) AS unitPrice,
-            SUM(a.quantity * COALESCE(s.best_sell, 0)) AS estimatedValue,
-            COUNT(DISTINCT a.location_id) AS locationCount
-       FROM assets a
-       LEFT JOIN market_stats s ON s.type_id = a.type_id AND s.region_id = ?
-      WHERE a.character_id = ?
-      GROUP BY a.type_id
-      ORDER BY estimatedValue DESC, quantity DESC, a.type_id`,
-    [regionId, characterId],
+  const rows = await db.select<{ typeId: number; quantity: number; locationCount: number }>(
+    `SELECT type_id                AS typeId,
+            SUM(quantity)          AS quantity,
+            COUNT(DISTINCT location_id) AS locationCount
+       FROM assets
+      WHERE character_id = ?
+      GROUP BY type_id`,
+    [characterId],
   );
-  return rows.map((row) => ({
+
+  const valuation = await valueItems(
+    db,
+    rows.map((row) => ({ typeId: row.typeId, quantity: row.quantity })),
+    options,
+  );
+
+  const overview = rows.map((row, index) => ({
     typeId: row.typeId,
     quantity: row.quantity,
-    unitPrice: row.unitPrice,
-    estimatedValue: row.estimatedValue,
+    unitPrice: valuation.items[index].unitPrice,
+    estimatedValue: valuation.items[index].value,
     locationCount: row.locationCount,
   }));
+
+  overview.sort(
+    (a, b) => b.estimatedValue - a.estimatedValue || b.quantity - a.quantity || a.typeId - b.typeId,
+  );
+  return overview;
 }
 
 /** 某物品的资产明细（逐条，含地点与位置标记） */
@@ -67,27 +69,29 @@ export async function getAssetDetails(
   db: DbAdapter,
   characterId: number,
   typeId: number,
-  regionId: number = DEFAULT_VALUATION_REGION_ID,
+  options: ValuationOptions = {},
 ): Promise<AssetDetailRow[]> {
+  const { price } = await getValuationPrice(db, typeId, options);
+  const unitPrice = price ?? 0;
+
   const rows = await db.select<{
     itemId: number;
     locationId: number;
     locationFlag: string;
     quantity: number;
     isSingleton: number;
-    estimatedValue: number;
   }>(
-    `SELECT a.item_id AS itemId,
-            a.location_id AS locationId,
-            a.location_flag AS locationFlag,
-            a.quantity AS quantity,
-            a.is_singleton AS isSingleton,
-            a.quantity * COALESCE(s.best_sell, 0) AS estimatedValue
-       FROM assets a
-       LEFT JOIN market_stats s ON s.type_id = a.type_id AND s.region_id = ?
-      WHERE a.character_id = ? AND a.type_id = ?
-      ORDER BY estimatedValue DESC, a.item_id`,
-    [regionId, characterId, typeId],
+    `SELECT item_id       AS itemId,
+            location_id   AS locationId,
+            location_flag AS locationFlag,
+            quantity      AS quantity,
+            is_singleton  AS isSingleton
+       FROM assets
+      WHERE character_id = ? AND type_id = ?
+      ORDER BY quantity DESC, item_id`,
+    [characterId, typeId],
   );
-  return rows;
+
+  // 同一物品单价一致，按数量倒序与按估值倒序等价
+  return rows.map((row) => ({ ...row, estimatedValue: row.quantity * unitPrice }));
 }

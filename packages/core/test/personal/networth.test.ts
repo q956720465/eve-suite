@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DbAdapter } from '../../src/db/types';
+import { DEFAULT_VALUATION_REGION_ID } from '../../src/engines/valuation';
 import {
   computeNetWorth,
-  DEFAULT_VALUATION_REGION_ID,
   listSnapshots,
   writeDailySnapshot,
 } from '../../src/personal/networth';
@@ -43,6 +43,20 @@ async function insertStats(db: DbAdapter, typeId: number, bestSell: number | nul
   await db.execute(
     `INSERT INTO market_stats (region_id, type_id, best_sell, updated_at) VALUES (?, ?, ?, ?)`,
     [regionId, typeId, bestSell, '2026-09-27T00:00:00Z'],
+  );
+}
+
+/** 同时写入最低卖价与 5% 分位（P4-1 估值口径用例需要） */
+async function insertStatsFull(
+  db: DbAdapter,
+  typeId: number,
+  bestSell: number | null,
+  p5Sell: number | null,
+): Promise<void> {
+  await db.execute(
+    `INSERT INTO market_stats (region_id, type_id, best_sell, p5_sell, updated_at)
+     VALUES (?, ?, ?, ?, '2026-09-27T00:00:00Z')`,
+    [JITA, typeId, bestSell, p5Sell],
   );
 }
 
@@ -106,6 +120,33 @@ describe('computeNetWorth', () => {
     expect(result.assetsValue).toBe(50);
     expect(result.distinctTypeCount).toBe(2);
     expect(result.missingPriceTypes).toBe(1);
+  });
+
+  it('P4-1 口径：资产按估算引擎 5% 分位计价，p5 缺失时回退最低卖价', async () => {
+    const db = await setup(0);
+    await insertAsset(db, 1, 34, 10); // p5 有值 → 4.25
+    await insertAsset(db, 2, 35, 10); // 只有最低卖价 → 回退 2.5
+    await insertAsset(db, 3, 99, 1); // 无报价 → 计 0
+    await insertStatsFull(db, 34, 3.69, 4.25);
+    await insertStatsFull(db, 35, 2.5, null);
+
+    const result = await computeNetWorth(db, CHARACTER_ID);
+
+    expect(result.assetsValue).toBe(67.5); // 10×4.25 + 10×2.5
+    expect(result.distinctTypeCount).toBe(3);
+    expect(result.missingPriceTypes).toBe(1);
+  });
+
+  it('P4-1 口径可指定：basis=best_sell 时按最低卖价计价（供对照）', async () => {
+    const db = await setup(0);
+    await insertAsset(db, 1, 34, 10);
+    await insertAsset(db, 2, 35, 10);
+    await insertStatsFull(db, 34, 3.69, 4.25);
+    await insertStatsFull(db, 35, 2.5, null);
+
+    const result = await computeNetWorth(db, CHARACTER_ID, { basis: 'best_sell' });
+
+    expect(result.assetsValue).toBeCloseTo(61.9, 8); // 10×3.69 + 10×2.5
   });
 
   it('空角色：各项为 0，无资产也不报错', async () => {

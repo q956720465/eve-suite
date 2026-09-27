@@ -1,26 +1,21 @@
 import type { DbAdapter } from '../db/types';
+import { valueItems, type ValuationOptions } from '../engines/valuation';
 import { systemClock, type Clock } from '../esi/clock';
 
-/**
- * P3 估值基准区域：The Forge（吉他）。
- * 方案已定：P3 先用「吉他最低卖价」估资产，P4 统一切换到估值引擎（5% 分位防操纵）。
- */
-export const DEFAULT_VALUATION_REGION_ID = 10000002;
-
-/** 净值分项（P3 口径；contractsValue 恒为 0，合同估值属 P4 引擎） */
+/** 净值分项（contractsValue 恒为 0，合同估值留 P5） */
 export interface NetWorthBreakdown {
   characterId: number;
   totalValue: number;
-  /** Σ(资产数量 × 基准区域最低卖价) */
+  /** Σ(资产数量 × 估值引擎口径价)：默认吉他 5% 分位（方案 §6.3 唯一定价出口） */
   assetsValue: number;
   walletBalance: number;
   /** Σ(未成交卖单 volume_remain × price) */
   sellOrdersValue: number;
-  /** P3 记 0（合同估值留 P4） */
+  /** 记 0（合同估值留 P5） */
   contractsValue: number;
   /** 参与估值的物品种类数 */
   distinctTypeCount: number;
-  /** 基准区域无卖价（或卖价为 0）的物品种类数——估值偏低提示 */
+  /** 基准区域无报价的物品种类数——估值偏低提示 */
   missingPriceTypes: number;
 }
 
@@ -33,28 +28,26 @@ export interface NetWorthSnapshot extends NetWorthBreakdown {
 /**
  * 计算角色净值（不写库）。
  *
- * 口径：assets_value 用基准区域 `market_stats.best_sell`；卖单按未成交量的挂单价计；
- * 无报价的物品计 0 并计入 `missingPriceTypes`（不抛错、不跳过整表）。
+ * 口径：`assets_value` 走估值引擎 [valueItems]（默认吉他 5% 分位，缺失按回退链处理）；
+ * 卖单按未成交量的挂单价计；无报价的物品计 0 并计入 `missingPriceTypes`（不抛错、不跳过整表）。
  */
 export async function computeNetWorth(
   db: DbAdapter,
   characterId: number,
-  regionId: number = DEFAULT_VALUATION_REGION_ID,
+  options: ValuationOptions = {},
 ): Promise<NetWorthBreakdown> {
-  const assetRows = await db.select<{
-    assetsValue: number | null;
-    distinctTypeCount: number;
-    missingPriceTypes: number;
-  }>(
-    `SELECT
-       COALESCE(SUM(a.quantity * COALESCE(s.best_sell, 0)), 0) AS assetsValue,
-       COUNT(DISTINCT a.type_id) AS distinctTypeCount,
-       COUNT(DISTINCT CASE WHEN s.best_sell IS NULL OR s.best_sell <= 0 THEN a.type_id END)
-         AS missingPriceTypes
-     FROM assets a
-     LEFT JOIN market_stats s ON s.type_id = a.type_id AND s.region_id = ?
-     WHERE a.character_id = ?`,
-    [regionId, characterId],
+  const assetRows = await db.select<{ typeId: number; quantity: number }>(
+    `SELECT type_id AS typeId, SUM(quantity) AS quantity
+       FROM assets
+      WHERE character_id = ?
+      GROUP BY type_id`,
+    [characterId],
+  );
+
+  const valuation = await valueItems(
+    db,
+    assetRows.map((row) => ({ typeId: row.typeId, quantity: row.quantity })),
+    options,
   );
 
   const walletRows = await db.select<{ walletBalance: number | null }>(
@@ -69,7 +62,7 @@ export async function computeNetWorth(
     [characterId],
   );
 
-  const assetsValue = assetRows[0]?.assetsValue ?? 0;
+  const assetsValue = valuation.totalValue;
   const walletBalance = walletRows[0]?.walletBalance ?? 0;
   const sellOrdersValue = orderRows[0]?.sellOrdersValue ?? 0;
   const contractsValue = 0;
@@ -81,14 +74,15 @@ export async function computeNetWorth(
     walletBalance,
     sellOrdersValue,
     contractsValue,
-    distinctTypeCount: assetRows[0]?.distinctTypeCount ?? 0,
-    missingPriceTypes: assetRows[0]?.missingPriceTypes ?? 0,
+    distinctTypeCount: valuation.distinctTypeCount,
+    missingPriceTypes: valuation.missingTypeIds.length,
   };
 }
 
 export interface WriteSnapshotOptions {
   clock?: Clock;
-  regionId?: number;
+  /** 估值口径（区域 / 站点 / 口径 / 离群过滤）；缺省为引擎默认（吉他 5% 分位） */
+  valuation?: ValuationOptions;
 }
 
 /**
@@ -102,7 +96,7 @@ export async function writeDailySnapshot(
   const clock = options.clock ?? systemClock;
   const createdAt = new Date(clock.now()).toISOString();
   const snapshotDate = createdAt.slice(0, 10);
-  const breakdown = await computeNetWorth(db, characterId, options.regionId);
+  const breakdown = await computeNetWorth(db, characterId, options.valuation);
 
   await db.execute(
     `INSERT INTO networth_snapshots (

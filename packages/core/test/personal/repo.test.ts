@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DbAdapter } from '../../src/db/types';
-import { DEFAULT_VALUATION_REGION_ID } from '../../src/personal/networth';
+import { DEFAULT_VALUATION_REGION_ID } from '../../src/engines/valuation';
 import {
   clearCharacterData,
   getAssetDetails,

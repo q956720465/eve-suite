@@ -227,7 +227,7 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
         <>
           <div className="panel">
             <div className="panel-head">
-              <h2>净值（P3 口径：吉他最低卖价）</h2>
+              <h2>净值（估值口径：吉他 5% 分位）</h2>
               <div className="tabs">
                 <button type="button" onClick={() => void handleSnapshot()}>
                   生成今日快照
@@ -261,7 +261,7 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
                 </table>
                 {networth.missingPriceTypes > 0 && (
                   <p className="hint">
-                    共 {networth.distinctTypeCount} 种物品，其中 {networth.missingPriceTypes} 种在吉他无卖价
+                    共 {networth.distinctTypeCount} 种物品，其中 {networth.missingPriceTypes} 种在吉他无报价
                     （已按 0 计，净值偏低）——请先在「行情」页采集枢纽数据。
                   </p>
                 )}
@@ -318,7 +318,7 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
                   <tr>
                     <th>物品</th>
                     <th>数量</th>
-                    <th>单价（吉他）</th>
+                    <th>单价（吉他 5% 分位）</th>
                     <th>估值</th>
                     <th>地点数</th>
                   </tr>

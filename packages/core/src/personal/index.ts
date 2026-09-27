@@ -66,12 +66,7 @@ export {
 } from './repo';
 export type { CharacterSummary, ScopeStateSummary, UpsertCharacterInput } from './repo';
 
-export {
-  computeNetWorth,
-  DEFAULT_VALUATION_REGION_ID,
-  listSnapshots,
-  writeDailySnapshot,
-} from './networth';
+export { computeNetWorth, listSnapshots, writeDailySnapshot } from './networth';
 export type {
   NetWorthBreakdown,
   NetWorthSnapshot,
