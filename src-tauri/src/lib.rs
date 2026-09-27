@@ -1,5 +1,7 @@
 mod db;
+mod oauth;
 mod sde;
+mod secrets;
 
 /// 应用版本（P0-2 建立，用于验证 UI → Rust IPC 链路）
 #[tauri::command]
@@ -11,6 +13,7 @@ fn app_version() -> String {
 pub fn run() {
     tauri::Builder::default()
         .manage(db::DbState::default())
+        .manage(oauth::OAuthState::default())
         .invoke_handler(tauri::generate_handler![
             app_version,
             db::db_execute,
@@ -23,7 +26,14 @@ pub fn run() {
             sde::sde_extract,
             sde::sde_read_chunk,
             sde::sde_file_sizes,
-            sde::sde_remove_file
+            sde::sde_remove_file,
+            oauth::oauth_prepare,
+            oauth::oauth_open_browser,
+            oauth::oauth_wait_callback,
+            oauth::oauth_cancel,
+            secrets::secret_set,
+            secrets::secret_get,
+            secrets::secret_delete
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

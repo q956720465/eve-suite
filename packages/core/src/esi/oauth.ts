@@ -66,6 +66,13 @@ export async function generatePkce(
   return { verifier, challenge };
 }
 
+/** 生成授权 state（防 CSRF，回调需原样返回）；随机源可注入以便测试 */
+export function generateState(
+  randomBytes: (length: number) => Uint8Array = defaultRandomBytes,
+): string {
+  return base64Url(randomBytes(16));
+}
+
 /** 构造授权 URL（用户在系统浏览器中打开） */
 export function buildAuthorizeUrl(params: AuthorizeUrlParams): string {
   const url = new URL(SSO_AUTHORIZE_ENDPOINT);

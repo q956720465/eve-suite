@@ -23,6 +23,7 @@ export {
   EVE_CLIENT_ID,
   exchangeCode,
   generatePkce,
+  generateState,
   parseCharacterId,
   parseJwtPayload,
   parseTokenResponse,
@@ -34,6 +35,27 @@ export {
   SSO_VERIFY_ENDPOINT,
 } from './oauth';
 export type { AuthorizeUrlParams, PkcePair, TokenHttp, TokenSet } from './oauth';
+
+export {
+  DEFAULT_AUTH_TIMEOUT_MS,
+  DEFAULT_REDIRECT_PATH,
+  OAuthFlowError,
+  runOAuthFlow,
+} from './oauth-flow';
+export type {
+  CallbackPayload,
+  LoopbackServer,
+  OAuthFlowErrorKind,
+  OAuthFlowOptions,
+} from './oauth-flow';
+
+export {
+  KEYRING_SERVICE,
+  OAuthTokenStore,
+  REFRESH_TOKEN_PREFIX,
+  refreshTokenAccount,
+} from './secret-store';
+export type { SecretStore } from './secret-store';
 
 export type { Clock } from './clock';
 export { systemClock } from './clock';

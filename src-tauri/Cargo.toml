@@ -28,4 +28,17 @@ sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runti
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
 futures-util = "0.3.34"
 zip = { version = "4", default-features = false, features = ["deflate"] }
-tokio = { version = "1.53.1", features = ["fs", "io-util", "sync"] }
+# net/time：P3-1 OAuth 本地回环监听（TcpListener）与回调超时
+tokio = { version = "1.53.1", features = ["fs", "io-util", "sync", "net", "time"] }
+# 系统钥匙串（P3-2）：OAuth 刷新令牌等机密存平台安全存储，数据库不落明文。
+# 平台后端各自独立依赖（Windows Credential Manager / macOS Keychain / Linux Secret Service），
+# 同一平台只允许启用一个后端——启用多个会静默回落 mock 存储。
+keyring = { version = "3.4", features = [
+    "apple-native",
+    "windows-native",
+    "sync-secret-service",
+] }
+
+[dev-dependencies]
+# 仅测试用：#[tokio::test] 需要宏与多线程运行时
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "net", "time", "io-util"] }

@@ -7,7 +7,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./db/tauri": "./src/db/tauri.ts",
-    "./sde/tauri": "./src/sde/tauri.ts"
+    "./sde/tauri": "./src/sde/tauri.ts",
+    "./esi/tauri": "./src/esi/tauri-oauth.ts",
+    "./esi/tauri-secrets": "./src/esi/tauri-secrets.ts"
   },
   "scripts": {
     "test": "vitest run",
