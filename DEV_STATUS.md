@@ -7,8 +7,8 @@
 
 | 阶段 | 状态 | 说明 |
 |---|---|---|
-| **P0 骨架** | ✅ 完成（P0-4-4 可选验证未做） | 明细见下表 |
-| P1 SDE 数据基座 | ⏳ 下一步 | 静态数据导入 |
+| **P0 骨架** | ✅ 全部完成（含 Release 链路验证） | 明细见下表 |
+| P1 SDE 数据基座 | ⏳ 任务清单已提交，待确认 | 静态数据导入 |
 | P2 行情模块 | 未开始 | |
 | P3 OAuth 个人数据 | 未开始 | **提前提醒：需要 CCP 开发者应用 client_id，申请有周期** |
 | P4 四大引擎 | 未开始 | |
@@ -23,8 +23,8 @@
 | P0-2 Tauri 2 壳 + IPC 占位 | ✅ | `aa0364d` | 窗口 1280×800（min 1024×700）；`app_version` 命令双向验证通过 |
 | P0-3 SQLite 迁移骨架 | ✅ | `59030be` | DbAdapter + 迁移执行器 + plugin-sql 运行时接线；schema v1；测试 7/7 绿 |
 | P0-4 三平台 CI 构建 | ✅ | `d96b966` | push main → Artifacts；tag `v*` → Release；**三平台 job 已全绿** |
-| P0-4-4 打 tag 验证 Release 链路 | ⏳ 待决策 | — | 建议打 `v0.0.1` 试跑（仓库私有，仅自己可见） |
-| P0-5 README + DEV_STATUS | ✅ | 本次提交 | 即 README.md + 本文件 |
+| P0-4-4 打 tag 验证 Release 链路 | ✅ | tag `v0.0.1`（指向 `b2b342e`） | tag run 全绿（3 build + 1 release job）；Release 页已挂全平台安装包，用户核实通过 |
+| P0-5 README + DEV_STATUS | ✅ | `b2b342e` | 即 README.md + 本文件 |
 
 ## 数据库现状
 
