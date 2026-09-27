@@ -57,6 +57,19 @@ export interface TokenHttp {
   postForm(url: string, body: Readonly<Record<string, string>>): Promise<HttpResponse>;
 }
 
+/** 令牌端点返回错误时的结构化异常（区分 invalid_grant 与瞬时故障） */
+export class TokenRequestError extends Error {
+  constructor(
+    readonly status: number,
+    /** 令牌端点返回的 `error` 字段（如 `invalid_grant`）；无法解析时为 null */
+    readonly oauthError: string | null,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'TokenRequestError';
+  }
+}
+
 /** 生成 PKCE 对（S256）；随机源可注入以便测试 */
 export async function generatePkce(
   randomBytes: (length: number) => Uint8Array = defaultRandomBytes,
@@ -174,9 +187,24 @@ async function requestToken(
 
   const response = await http.postForm(SSO_TOKEN_ENDPOINT, body);
   if (response.status < 200 || response.status >= 300) {
-    throw new Error(`令牌请求失败：HTTP ${response.status} ${response.text.slice(0, 200)}`);
+    throw new TokenRequestError(
+      response.status,
+      parseOAuthError(response.text),
+      `令牌请求失败：HTTP ${response.status} ${response.text.slice(0, 200)}`,
+    );
   }
   return parseTokenResponse(response.text, nowMs);
+}
+
+/** 从令牌端点的错误响应体中提取 `error` 字段（如 `invalid_grant`） */
+export function parseOAuthError(text: string): string | null {
+  try {
+    const payload = JSON.parse(text) as Record<string, unknown>;
+    const error = payload.error;
+    return typeof error === 'string' && error.length > 0 ? error : null;
+  } catch {
+    return null;
+  }
 }
 
 function parseScopes(value: unknown): string[] {

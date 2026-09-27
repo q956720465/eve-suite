@@ -10,7 +10,7 @@
 | **P0 骨架** | ✅ 全部完成 | 含 Release 链路验证 |
 | **P1 SDE 数据基座** | ✅ 全部完成（含 UI 人工复验） | 官方 SDE 下载/转换/入库 + 中英文搜索 |
 | **P2 行情模块** | ✅ 全部完成（含 UI 人工复验） | 5 枢纽 5 分钟采集 + 按需行情 + 监视列表 |
-| P3 OAuth 个人数据 | 🚧 进行中（P3-1 / P3-2 已完成） | 本地回环授权 + 七类数据同步 + 资产/净值视图 |
+| P3 OAuth 个人数据 | 🚧 进行中（P3-1 / P3-2 / P3-3 已完成） | 本地回环授权 + 七类数据同步 + 资产/净值视图 |
 | P4 四大引擎 | 未开始 | 蓝图 BOM 数据已随 P1 入库 |
 | P5 整合功能 + 全域层 | 未开始 | |
 | P6 分发打磨 | 未开始 | 仓库需由私有转公开；macOS 签名 / 公证 |
@@ -56,7 +56,7 @@
 |---|---|---|
 | P3-1 OAuth 本地回环授权 | ✅ 完成 | core 逻辑层（PKCE S256 / 授权 URL / 令牌交换与刷新 / JWT 解析）+ **Rust 回环服务**（`src-tauri/src/oauth.rs`，127.0.0.1 随机端口 `/callback`）+ 打开系统浏览器；真实浏览器授权端到端留 **P3-8** |
 | P3-2 令牌安全存储 | ✅ 完成（待跨平台复核） | Rust `keyring` **只存 refresh token**（账号 `refresh-token:<characterId>`），access token 仅内存；**数据库零令牌字段** |
-| P3-3 认证请求 + 自动刷新 | 未开始 | EsiClient 增加 Bearer 与临期自动 refresh |
+| P3-3 认证请求 + 自动刷新 | ✅ 完成 | `EsiClient` 注入 Bearer（`auth` + `characterId`）；401 → 强制刷新后**只重试一次**；`TokenManager` 临期（默认 60s）自动刷新，**单飞**并发 + **轮换回写**钥匙串 |
 | P3-4 迁移 0004 个人表 | 未开始 | characters / assets / wallet_journal / my_orders / contracts / industry_jobs / mining_ledger / lp_balances / networth_snapshots |
 | P3-5 七类数据同步 | 未开始 | |
 | P3-6 同步调度 | 未开始 | 15–30 分钟 + 启动即同步；遵守 Cache-Control |
@@ -80,15 +80,16 @@
 - SDE 缓存：`%APPDATA%\com.eve-suite.desktop\sde-cache\`（11 个 JSONL，约 160MB）
 - 实测入库（SDE build 3542233）：types 53,060 / stations 5,210 / blueprints 5,082 / 配方材料 42,830
 - 实测采集（真实行情）：**5 枢纽 890,701 条订单**（伏尔戈 403,514 / 多美 182,019 / 美特伯里斯 119,361 / 西玛特尔 71,330 / 金纳泽 114,477），聚合出 56,347+ 条 market_stats；Tritanium 实测 吉他 卖 3.69 / 买 3.70 / 5% 分位 3.762
-- 测试：core **127 用例全绿**（15 个文件）；Rust **11 用例全绿**（另有 1 个 `#[ignore]` 真钥匙串往返自检，用 `cargo test -- --ignored --nocapture` 手动跑）
+- 测试：core **153 用例全绿**（18 个文件）；Rust **11 用例全绿**（另有 1 个 `#[ignore]` 真钥匙串往返自检，用 `cargo test -- --ignored --nocapture` 手动跑）
 - 机密存储：OAuth 刷新令牌存**系统钥匙串**（服务名 `com.eve-suite.desktop`），**数据库零令牌字段**（schema 未变，仍 v3）
 
 ## 下一步
 
-1. **P3-3**：EsiClient 增加 Bearer 与临期自动刷新（令牌读写走 P3-2 的 `OAuthTokenStore`）
+1. **P3-4**：迁移 0004 —— 九张个人数据表（characters / assets / wallet_journal / my_orders / contracts / industry_jobs / mining_ledger / lp_balances / networth_snapshots）
 2. 待复核项：
-   - CI Linux/macOS 真钥匙串后端能否编译通过（首次推送 main 后看 Actions）
+   - ✅ **已验证**：CI Linux/macOS 真钥匙串后端可编译 —— 提交 `9130776` 推送后 CI run `36322411890`：ubuntu-22.04 / windows-latest / macos-latest 三个 build job 全 success，`sync-secret-service` 无需回退；release job 按预期 skipped
    - Windows 单条凭据 blob 存在上限，refresh token 实际长度待 **P3-8** 实测（超限则分片存储）
+   - **ESI 认证端点的 CORS 预检是否放行 `Authorization` 头**（P3-3 引入，P3-8 实测；若不放行则认证请求需改走 Rust 代理）
 
 ## 踩坑备忘（重要，勿重蹈）
 
@@ -109,7 +110,13 @@
    - 核验手段：`cargo tree -p keyring --depth 1` 应只出现该平台的后端依赖（Windows = `windows-sys`/`byteorder`/`zeroize`）；若同时出现 `dbus-secret-service`、`linux-keyutils`，说明配置有问题。
    - 注意：keyring 的后端依赖是**按 target 门控**的，一份 `features = ["apple-native","windows-native","sync-secret-service"]` 可跨三平台构建，不会在 Windows 上误编译 dbus。
 13. **Linux 编译 `sync-secret-service` 需系统 `libdbus-1-dev`**（已加入 CI 的 apt 安装列表）。若仍失败，回退顺序：① `keyring` 的 `vendored` feature（源码编译 libdbus，需 build-essential）→ ② `async-secret-service`（zbus 纯 Rust，无 C 依赖）。
+   - **已实测**：首轮推送（提交 `9130776`）的 CI run `36322411890` 中 ubuntu-22.04 构建通过，**无需回退**。
 14. **Windows 凭据管理器条目名 = `{account}.{service}`**（实测 `selftest-54716.com.eve-suite.desktop`），故账号名带 `:` 不影响识别；但单条凭据 blob 存在上限，refresh token 实际长度待 P3-8 实测（超限需分片）。
+15. **认证错误的错误契约（P3-3 定，勿破坏）**：`TokenManagerError`（如 `reauth_required`）由 `EsiClient` **原样抛出**，**不包装成 `EsiError`**。
+   - 原因：`RequestScheduler` 只重试 `EsiError` 且要求 `retryable === true`；若把「刷新令牌失效 / 需重新授权」包成可重试错误，会变成永远失败的无限重试。
+   - 推论：认证类失败**不会被调度器自动重试**。若日后希望「刷新时网络抖动」也能重试，需在 P3-6 的同步任务层单独处理。
+   - 令牌端点错误已结构化：`oauth.ts` 的 `TokenRequestError` 带 `status` 与 `oauthError`（如 `invalid_grant`），**不要再用字符串匹配 HTTP 文本**来区分失败原因。
+16. **401 只重试一次**：`EsiClient` 收到 401 会调用 `auth.invalidate()` 丢弃内存访问令牌并重发**一次**；再次 401 直接报错（避免死循环）。
 
 ## 关键文件地图
 
@@ -130,6 +137,7 @@
 | OAuth 逻辑 / 授权流程编排 | `packages/core/src/esi/oauth.ts`、`esi/oauth-flow.ts` |
 | OAuth 运行时绑定（回环 / 钥匙串） | `packages/core/src/esi/tauri-oauth.ts`、`esi/tauri-secrets.ts` |
 | 机密存储契约 / 令牌存储 | `packages/core/src/esi/secret-store.ts` |
+| 访问令牌管理（Bearer 注入点） | `packages/core/src/esi/token-manager.ts` |
 | OAuth 回环服务（Rust） | `src-tauri/src/oauth.rs` |
 | 系统钥匙串（Rust） | `src-tauri/src/secrets.rs` |
 | 行情采集 / 统计 / 按需 / 监视 | `packages/core/src/market/` |

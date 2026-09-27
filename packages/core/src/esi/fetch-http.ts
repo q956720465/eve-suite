@@ -15,6 +15,9 @@ export function createFetchHttpClient(): HttpClient {
       if (request.ifNoneMatch !== undefined) {
         headers['If-None-Match'] = request.ifNoneMatch;
       }
+      if (request.bearerToken !== undefined) {
+        headers.Authorization = `Bearer ${request.bearerToken}`;
+      }
 
       const response = await fetch(request.url, {
         method: 'GET',

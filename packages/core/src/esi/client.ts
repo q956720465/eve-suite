@@ -12,29 +12,49 @@ import {
 /** ESI 公共端点（tranquility） */
 export const DEFAULT_ESI_BASE_URL = 'https://esi.evetech.net/latest';
 
+/**
+ * 认证能力端口（消费方定义，适配器为 `TokenManager`）。
+ * ESI 客户端只依赖本接口，不感知系统钥匙串与刷新令牌细节。
+ */
+export interface EsiAuthProvider {
+  /** 返回可用访问令牌（实现方负责临期刷新） */
+  getAccessToken(characterId: number): Promise<string>;
+  /** 令牌被服务端拒绝（401）时调用：丢弃内存令牌，下次调用将强制刷新 */
+  invalidate(characterId: number): void;
+}
+
 export interface EsiClientOptions {
   /** 宿主注入的 HTTP 客户端（运行时 fetch，测试 mock） */
   http: HttpClient;
   baseUrl?: string;
+  /** 认证能力；未提供时只能访问公开端点（传 characterId 会报错） */
+  auth?: EsiAuthProvider;
 }
 
 export interface EsiRequestOptions {
   /** 上次响应携带的 ETag，命中时服务端返回 304（无响应体） */
   etag?: string;
+  /** 以该角色身份发起认证请求（需构造时提供 auth） */
+  characterId?: number;
   signal?: AbortSignal;
 }
 
 /**
- * ESI 客户端：负责 URL 构造、条件请求、响应头解析与错误分类。
- * 限流排队与退避重试由上层请求队列负责，本类只做「一次请求」。
+ * ESI 客户端：负责 URL 构造、条件请求、认证令牌注入、响应头解析与错误分类。
+ * 限流排队与退避重试由上层请求队列负责，本类只做「一次请求」（401 例外：强制刷新后重试一次）。
+ *
+ * 错误契约：认证类失败（如刷新令牌失效）会以 `TokenManagerError` **原样抛出**，
+ * 不包装成 `EsiError` —— 调度器只对 `EsiError` 重试，而「需要重新授权」不应被重试。
  */
 export class EsiClient {
   private readonly http: HttpClient;
   private readonly baseUrl: string;
+  private readonly auth: EsiAuthProvider | undefined;
 
   constructor(options: EsiClientOptions) {
     this.http = options.http;
     this.baseUrl = (options.baseUrl ?? DEFAULT_ESI_BASE_URL).replace(/\/+$/, '');
+    this.auth = options.auth;
   }
 
   /** 服务器状态（轻量，用于连通性自检） */
@@ -81,21 +101,33 @@ export class EsiClient {
     );
   }
 
+  /**
+   * 认证 GET（个人数据端点）：`path` 为 ESI 路径，如 `/characters/123/wallet/`。
+   * 资产 / 钱包 / 合同等具体快捷方法在 P3-5 之上补。
+   */
+  fetchAuthenticated<T>(
+    path: string,
+    characterId: number,
+    options?: Omit<EsiRequestOptions, 'characterId'>,
+  ): Promise<EsiResult<T>> {
+    const normalized = path.startsWith('/') ? path : `/${path}`;
+    return this.request<T>(`${this.baseUrl}${normalized}`, { ...options, characterId });
+  }
+
   private async request<T>(url: string, options?: EsiRequestOptions): Promise<EsiResult<T>> {
-    let response: HttpResponse;
-    try {
-      response = await this.http.get({
-        url,
-        ifNoneMatch: options?.etag,
-        signal: options?.signal,
-      });
-    } catch (error) {
-      if (error instanceof EsiError) throw error;
-      throw new EsiError(
-        'network',
-        null,
-        `请求失败：${error instanceof Error ? error.message : String(error)}`,
-      );
+    const characterId = options?.characterId;
+    let bearerToken: string | undefined;
+    if (characterId !== undefined) {
+      bearerToken = await this.acquireToken(characterId);
+    }
+
+    let response = await this.send(url, options, bearerToken);
+
+    // 401：令牌可能被提前吊销（改密/被踢下线）→ 强制刷新后仅重试一次
+    if (response.status === 401 && characterId !== undefined && this.auth !== undefined) {
+      this.auth.invalidate(characterId);
+      bearerToken = await this.acquireToken(characterId);
+      response = await this.send(url, options, bearerToken);
     }
 
     const etag = readHeader(response.headers, 'etag');
@@ -145,6 +177,41 @@ export class EsiClient {
     }
 
     return { notModified: false, data, ...responseMeta };
+  }
+
+  /** 取访问令牌；未配置 auth 时属于调用方用法错误 */
+  private async acquireToken(characterId: number): Promise<string> {
+    if (this.auth === undefined) {
+      throw new EsiError(
+        'client',
+        null,
+        `请求角色 ${characterId} 的认证端点，但 EsiClient 未配置 auth`,
+      );
+    }
+    return this.auth.getAccessToken(characterId);
+  }
+
+  /** 发送一次请求并把传输层异常归一化为 network 类 EsiError */
+  private async send(
+    url: string,
+    options: EsiRequestOptions | undefined,
+    bearerToken: string | undefined,
+  ): Promise<HttpResponse> {
+    try {
+      return await this.http.get({
+        url,
+        ifNoneMatch: options?.etag,
+        bearerToken,
+        signal: options?.signal,
+      });
+    } catch (error) {
+      if (error instanceof EsiError) throw error;
+      throw new EsiError(
+        'network',
+        null,
+        `请求失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 }
 

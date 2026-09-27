@@ -15,6 +15,8 @@ export interface HttpGetRequest {
   url: string;
   /** ETag 条件请求（命中则服务端返回 304 且无响应体） */
   ifNoneMatch?: string;
+  /** 认证请求的访问令牌：会以 `Authorization: Bearer <token>` 发送 */
+  bearerToken?: string;
   signal?: AbortSignal;
 }
 

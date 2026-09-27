@@ -13,7 +13,7 @@ export type { HttpClient, HttpGetRequest, HttpResponse } from './http';
 export { readHeader, readNumberHeader } from './http';
 
 export { DEFAULT_ESI_BASE_URL, EsiClient } from './client';
-export type { EsiClientOptions, EsiRequestOptions } from './client';
+export type { EsiAuthProvider, EsiClientOptions, EsiRequestOptions } from './client';
 
 export { createFetchHttpClient } from './fetch-http';
 
@@ -26,6 +26,7 @@ export {
   generateState,
   parseCharacterId,
   parseJwtPayload,
+  parseOAuthError,
   parseTokenResponse,
   refreshAccessToken,
   SSO_AUTHORIZE_ENDPOINT,
@@ -33,6 +34,7 @@ export {
   SSO_REVOKE_ENDPOINT,
   SSO_TOKEN_ENDPOINT,
   SSO_VERIFY_ENDPOINT,
+  TokenRequestError,
 } from './oauth';
 export type { AuthorizeUrlParams, PkcePair, TokenHttp, TokenSet } from './oauth';
 
@@ -56,6 +58,13 @@ export {
   refreshTokenAccount,
 } from './secret-store';
 export type { SecretStore } from './secret-store';
+
+export {
+  DEFAULT_REFRESH_SKEW_MS,
+  TokenManager,
+  TokenManagerError,
+} from './token-manager';
+export type { TokenManagerErrorKind, TokenManagerOptions } from './token-manager';
 
 export type { Clock } from './clock';
 export { systemClock } from './clock';
