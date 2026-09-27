@@ -50,6 +50,26 @@
 | P2-7 UI 行情页 | ✅ | 采集状态表 + 跨枢纽比价 + 订单簿 + Lightweight-charts 日线图 + 监视页 |
 | P2-8 真数据端到端验证 | ✅ | 5 枢纽 890,701 条订单，约 100 秒；实测见下 |
 
+## P3 进度（进行中）
+
+| 子任务 | 状态 | 备注 |
+|---|---|---|
+| P3-1 OAuth 本地回环授权 | 🚧 逻辑层完成 | core 侧已完成：PKCE(S256) / 授权 URL 构造 / 令牌交换与刷新 / JWT 解析（12 个用例）。**待做**：Rust 本地回环回调服务 + 打开系统浏览器 |
+| P3-2 令牌安全存储 | 未开始 | 计划：Rust `keyring` 存 refresh token，数据库不落明文 |
+| P3-3 认证请求 + 自动刷新 | 未开始 | EsiClient 增加 Bearer 与临期自动 refresh |
+| P3-4 迁移 0004 个人表 | 未开始 | characters / assets / wallet_journal / my_orders / contracts / industry_jobs / mining_ledger / lp_balances / networth_snapshots |
+| P3-5 七类数据同步 | 未开始 | |
+| P3-6 同步调度 | 未开始 | 15–30 分钟 + 启动即同步；遵守 Cache-Control |
+| P3-7 UI 资产页 | 未开始 | |
+| P3-8 真数据端到端验证 | 未开始 | 需用户本人在场完成一次浏览器授权 |
+
+**P3 已确认的决策**：
+- **公司资产不纳入 P3**（需额外 scope 与公司角色权限，留到 P5）
+- **净值口径**：P3 先用 P2 已有的「吉他最低卖价」，P4 统一切换到估值引擎
+- **client_id 已内置**：`packages/core/src/esi/oauth.ts` 的 `EVE_CLIENT_ID`（公开非机密）
+- **不使用 client_secret**：走 PKCE；该 secret 曾出现在聊天记录中，建议到 CCP 后台重置，且**严禁写入仓库或安装包**
+- OAuth 全流程走渲染进程 fetch（实测 token/verify 端点 CORS 允许，预检通过）——只有「本地回环接收回调」需要 Rust
+
 ## 数据库现状
 
 - schema 版本：**v3**（v1 settings + v2 SDE 11 表 + v3 行情 7 表）

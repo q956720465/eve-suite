@@ -17,6 +17,24 @@ export type { EsiClientOptions, EsiRequestOptions } from './client';
 
 export { createFetchHttpClient } from './fetch-http';
 
+export {
+  buildAuthorizeUrl,
+  CHARACTER_SCOPES,
+  EVE_CLIENT_ID,
+  exchangeCode,
+  generatePkce,
+  parseCharacterId,
+  parseJwtPayload,
+  parseTokenResponse,
+  refreshAccessToken,
+  SSO_AUTHORIZE_ENDPOINT,
+  SSO_ISSUER,
+  SSO_REVOKE_ENDPOINT,
+  SSO_TOKEN_ENDPOINT,
+  SSO_VERIFY_ENDPOINT,
+} from './oauth';
+export type { AuthorizeUrlParams, PkcePair, TokenHttp, TokenSet } from './oauth';
+
 export type { Clock } from './clock';
 export { systemClock } from './clock';
 
