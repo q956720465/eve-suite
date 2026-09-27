@@ -1,0 +1,16 @@
+# 国内镜像（rsproxy.cn）：本地 Rust 构建加速。
+# 注意：CI（GitHub Actions，境外机器）会在构建前移除本文件以直连 crates.io。
+[source.crates-io]
+replace-with = 'rsproxy-sparse'
+
+[source.rsproxy]
+registry = "https://rsproxy.cn/crates.io-index"
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"
+
+[registries.rsproxy]
+index = "https://rsproxy.cn/crates.io-index"
+
+[net]
+git-fetch-with-cli = true

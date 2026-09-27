@@ -1,0 +1,18 @@
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Rust / Tauri
+target/
+src-tauri/target/
+
+# 测试与构建产物
+coverage/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 本地日志
+*.log

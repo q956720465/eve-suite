@@ -1,0 +1,18 @@
+{
+  "name": "@eve-suite/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "纯 TypeScript 核心逻辑包（ESI 客户端 / 数据库 / 四大引擎 / 同步调度 / 通知），不依赖任何 UI",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}

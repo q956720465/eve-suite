@@ -1,0 +1,12 @@
+{
+  "name": "eve-suite",
+  "version": "0.0.0",
+  "private": true,
+  "description": "EVE Online 单机桌面工具套件（Tauri 2 + React + 纯 TS 核心包）",
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "test": "pnpm -r test",
+    "build": "pnpm -r build",
+    "dev:ui": "pnpm --filter @eve-suite/ui dev"
+  }
+}
