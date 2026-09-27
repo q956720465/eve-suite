@@ -182,6 +182,34 @@ export async function getOrderBook(
   return { sells, buys };
 }
 
+/** 日线历史（按日期升序返回，可直接用于图表） */
+export async function getDailyHistory(
+  db: DbAdapter,
+  regionId: number,
+  typeId: number,
+  limit = 400,
+): Promise<{ date: string; average: number; highest: number; lowest: number; volume: number }[]> {
+  const rows = await db.select<{
+    date: string;
+    average: number;
+    highest: number;
+    lowest: number;
+    volume: number;
+  }>(
+    `SELECT date    AS date,
+            average AS average,
+            highest AS highest,
+            lowest  AS lowest,
+            volume  AS volume
+       FROM market_history_daily
+      WHERE region_id = ? AND type_id = ?
+      ORDER BY date DESC
+      LIMIT ?`,
+    [regionId, typeId, limit],
+  );
+  return rows.reverse();
+}
+
 /** 各枢纽采集状态（区域名取自 SDE 星域表） */
 export async function getCollectStates(
   db: DbAdapter,

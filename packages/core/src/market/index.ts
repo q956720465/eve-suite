@@ -26,7 +26,7 @@ export {
 } from './watchlist';
 export type { WatchlistItem } from './watchlist';
 
-export { getCollectStates, getOrderBook, getTypeStats, getTypeStatsAcrossHubs } from './repo';
+export { getCollectStates, getDailyHistory, getOrderBook, getTypeStats, getTypeStatsAcrossHubs } from './repo';
 export type {
   HubCollectState,
   HubPriceComparison,

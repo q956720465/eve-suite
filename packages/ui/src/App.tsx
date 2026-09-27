@@ -3,12 +3,27 @@ import { initDatabase } from '@eve-suite/core/db/tauri';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 
+import MarketPage from './market/MarketPage';
+import { useMarketCollector } from './market/useMarketCollector';
+import WatchlistPage from './market/WatchlistPage';
 import SdePage from './sde/SdePage';
 
-/** 应用壳：环境状态 + 数据页（P1 起逐阶段扩展功能页） */
+type Tab = 'sde' | 'market' | 'watchlist';
+
+const TABS: readonly { id: Tab; label: string }[] = [
+  { id: 'sde', label: '数据' },
+  { id: 'market', label: '行情' },
+  { id: 'watchlist', label: '监视' },
+];
+
+/** 应用壳：环境状态 + 页签导航 + 各功能页（P2 起行情采集在应用级运行） */
 export default function App() {
   const [runtime, setRuntime] = useState('检测中…');
   const [database, setDatabase] = useState('检测中…');
+  const [tab, setTab] = useState<Tab>('sde');
+
+  // 行情采集在应用级持有：切页签不中断，也不重复初始化
+  const collector = useMarketCollector();
 
   useEffect(() => {
     invoke<string>('app_version')
@@ -33,8 +48,22 @@ export default function App() {
   return (
     <main className="app">
       <header className="app-header">
-        <h1>EVE SUITE</h1>
-        <p className="subtitle">P1 数据基座 · SDE 静态数据</p>
+        <div className="title-row">
+          <h1>EVE SUITE</h1>
+          <nav className="nav">
+            {TABS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={tab === item.id ? 'active' : ''}
+                onClick={() => setTab(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+        </div>
+        <p className="subtitle">P2 行情模块 · 5 枢纽采集 · 跨枢纽比价 · 监视列表</p>
         <p className="meta">
           core 版本：<code>{CORE_VERSION}</code>
         </p>
@@ -45,7 +74,10 @@ export default function App() {
           数据库：<code>{database}</code>
         </p>
       </header>
-      <SdePage />
+
+      {tab === 'sde' && <SdePage />}
+      {tab === 'market' && <MarketPage collector={collector} />}
+      {tab === 'watchlist' && <WatchlistPage />}
     </main>
   );
 }

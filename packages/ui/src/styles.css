@@ -193,3 +193,64 @@ button:disabled {
   color: #9aa8ba;
   white-space: pre-wrap;
 }
+
+/* ---------- P2 行情模块 ---------- */
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.nav {
+  display: flex;
+  gap: 6px;
+}
+
+.nav button.active {
+  background: #1d3a52;
+  border-color: #3f7ea6;
+  color: #9fe8ff;
+}
+
+.market {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.result tbody tr.selected {
+  background: #16202d;
+}
+
+td.sell {
+  color: #f87171;
+}
+
+td.buy {
+  color: #4ade80;
+}
+
+.chart {
+  width: 100%;
+}
+
+.orderbook {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.csv {
+  width: 100%;
+  box-sizing: border-box;
+  background: #0d131c;
+  color: #c8d3e0;
+  border: 1px solid #24313f;
+  border-radius: 6px;
+  padding: 8px;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
