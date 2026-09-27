@@ -84,7 +84,7 @@ describe('PKCE 与授权 URL', () => {
     expect(CHARACTER_SCOPES).toContain('esi-markets.read_character_orders.v1');
     expect(CHARACTER_SCOPES).toContain('esi-industry.read_character_jobs.v1');
     expect(CHARACTER_SCOPES).toContain('esi-industry.read_character_mining.v1');
-    expect(CHARACTER_SCOPES).toContain('esi-loyalty.read_loyalty_points.v1');
+    expect(CHARACTER_SCOPES).toContain('esi-characters.read_loyalty.v1');
   });
 });
 

@@ -92,6 +92,13 @@ export default function AssetsPage() {
     );
   }, [selectedId, loadCharacter, sync.lastRound]);
 
+  // 每轮同步完成后刷新角色卡：corporation_id 由同步顺带补齐、last_sync_at 随轮更新，
+  // 不刷新会一直显示授权那一刻的陈旧数据（「未知 (ESI未补齐)」/「--」）
+  useEffect(() => {
+    if (sync.lastRound === null) return;
+    void characters.refresh().catch(() => undefined);
+  }, [sync.lastRound, characters.refresh]);
+
   const toggleExpand = useCallback(
     async (typeId: number) => {
       if (selectedId === null) return;

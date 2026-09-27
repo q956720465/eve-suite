@@ -1,4 +1,4 @@
-//! OAuth 本地回环授权（P3-1）：绑定 127.0.0.1 随机端口接收 SSO 回调，并调起系统浏览器。
+//! OAuth 本地回环授权（P3-1）：绑定 127.0.0.1 固定端口接收 SSO 回调，并调起系统浏览器。
 //!
 //! 职责边界：PKCE / state / 授权 URL 构造 / 令牌交换全部在 TypeScript 侧
 //! （`@eve-suite/core` 的 `esi/oauth.ts` 与 `esi/oauth-flow.ts`）。本模块只做渲染进程
@@ -6,8 +6,11 @@
 //! 1. 监听本地回环端口接收浏览器重定向（WebView 无法监听端口）
 //! 2. 调起系统默认浏览器（WebView 内直接跳转会被 CCP 登录页拒载）
 //!
-//! 回调地址形式：`http://127.0.0.1:{随机端口}/callback`（EVE SSO 对 Native/Desktop
-//! 应用按 RFC 8252 允许回环动态端口）。
+//! 回调地址形式：`http://127.0.0.1:{固定端口}/callback`。端口由 TS 侧传入
+//! （`OAUTH_LOOPBACK_PORT`），**必须与 CCP 后台注册的回调地址完全一致**——P3-8
+//! 实测 EVE SSO 要求精确匹配（含端口与路径），不采纳 RFC 8252 对 Native 应用
+//! 的回环动态端口豁免，随机端口会报
+//! `invalid_request: The redirect URL does not match any of the configured values`。
 
 use std::process::Command;
 use std::time::Duration;
@@ -17,7 +20,7 @@ use tauri::State;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{oneshot, Mutex};
-use tokio::task::JoinHandle;
+use tokio::task::AbortHandle;
 use tokio::time::timeout;
 
 /// 默认回调路径（与 TypeScript 侧保持一致）
@@ -47,63 +50,55 @@ pub struct CallbackPayload {
     pub error_description: Option<String>,
 }
 
-/// 进行中的授权会话
-struct PendingFlow {
-    receiver: oneshot::Receiver<CallbackPayload>,
-    task: JoinHandle<()>,
-}
-
 /// 授权会话状态（同一时刻至多一个进行中的授权）
 #[derive(Default)]
 pub struct OAuthState {
-    pending: Mutex<Option<PendingFlow>>,
+    /// 回调结果通道（`wait_callback` 取走；下一次 `prepare` 覆盖时丢弃旧的）
+    receiver: Mutex<Option<oneshot::Receiver<CallbackPayload>>>,
+    /// 当前监听任务的中止句柄（总是指向**最新**的监听器：固定端口下重新授权
+    /// 必须先中止上一个监听器释放端口，哪怕旧流程还在等待回调）
+    listener: Mutex<Option<AbortHandle>>,
 }
 
-/// 绑定本地回环端口并开始等待回调，返回随机端口与回调地址
-pub async fn prepare(state: &OAuthState, redirect_path: &str) -> Result<PrepareResult, String> {
+/// 绑定本地回环端口并开始等待回调，返回端口与回调地址
+///
+/// 固定端口意味着旧监听器必须先释放：先中止上一个监听任务再绑定；
+/// 中止到端口真正释放存在微小竞态，`AddrInUse` 时短暂重试。
+pub async fn prepare(
+    state: &OAuthState,
+    port: u16,
+    redirect_path: &str,
+) -> Result<PrepareResult, String> {
     let path = normalize_path(redirect_path);
 
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .map_err(|error| format!("无法绑定本地回环端口：{error}"))?;
-    let port = listener
-        .local_addr()
-        .map_err(|error| format!("读取本地端口失败：{error}"))?
-        .port();
+    abort_listener(state).await;
+    let listener = bind_with_retry(port).await?;
     let redirect_uri = format!("http://127.0.0.1:{port}{path}");
 
     let (sender, receiver) = oneshot::channel();
     let task = tokio::spawn(serve(listener, path, sender));
+    *state.listener.lock().await = Some(task.abort_handle());
 
-    let mut guard = state.pending.lock().await;
-    let previous = guard.replace(PendingFlow { receiver, task });
-    drop(guard);
-    // 覆盖前先释放上一个会话，避免端口泄漏（abort 后 await 确保监听器已真正释放）
-    if let Some(previous) = previous {
-        previous.task.abort();
-        let _ = previous.task.await;
-    }
+    // 覆盖旧会话的回调通道（尚在等待的旧流程自此以「会话已结束」收场）
+    drop(state.receiver.lock().await.replace(receiver));
 
     Ok(PrepareResult { port, redirect_uri })
 }
 
 /// 等待回调（超时后释放监听并报错）
 pub async fn wait_callback(state: &OAuthState, timeout_ms: u64) -> Result<CallbackPayload, String> {
-    let flow = state
-        .pending
+    let receiver = state
+        .receiver
         .lock()
         .await
         .take()
         .ok_or_else(|| "没有进行中的授权会话，请先调用 oauth_prepare".to_string())?;
 
-    let PendingFlow { receiver, task } = flow;
-
     match timeout(Duration::from_millis(timeout_ms), receiver).await {
         Ok(Ok(payload)) => Ok(payload),
         Ok(Err(_)) => Err("授权会话已结束，但未收到有效回调".to_string()),
         Err(_) => {
-            task.abort();
-            let _ = task.await;
+            abort_listener(state).await;
             Err(format!("授权超时（{timeout_ms} 毫秒），已释放本地回环端口"))
         }
     }
@@ -111,19 +106,48 @@ pub async fn wait_callback(state: &OAuthState, timeout_ms: u64) -> Result<Callba
 
 /// 取消进行中的授权会话并释放端口（无会话时视为成功）
 pub async fn cancel(state: &OAuthState) {
-    if let Some(flow) = state.pending.lock().await.take() {
-        flow.task.abort();
-        let _ = flow.task.await;
+    abort_listener(state).await;
+    state.receiver.lock().await.take();
+}
+
+/// 中止当前监听任务（如有），使其释放回环端口
+async fn abort_listener(state: &OAuthState) {
+    if let Some(handle) = state.listener.lock().await.take() {
+        handle.abort();
     }
 }
 
-/// 绑定本地回环端口，返回随机端口与回调地址
+/// 绑定回环端口；`AddrInUse` 时短暂重试（刚中止的上一个监听器释放端口有竞态窗口）
+async fn bind_with_retry(port: u16) -> Result<TcpListener, String> {
+    const RETRIES: u32 = 20;
+    const RETRY_DELAY: Duration = Duration::from_millis(50);
+    const BUSY_MESSAGE: &str = "可能被其他程序或本应用的另一实例占用";
+
+    for _ in 0..RETRIES {
+        match TcpListener::bind(("127.0.0.1", port)).await {
+            Ok(listener) => return Ok(listener),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                tokio::time::sleep(RETRY_DELAY).await;
+            }
+            Err(error) => {
+                return Err(format!("无法绑定本地回环端口 {port}（{BUSY_MESSAGE}）：{error}"));
+            }
+        }
+    }
+
+    TcpListener::bind(("127.0.0.1", port))
+        .await
+        .map_err(|error| format!("无法绑定本地回环端口 {port}（{BUSY_MESSAGE}）：{error}"))
+}
+
+/// 绑定本地回环端口（须与 CCP 注册的回调地址一致），返回端口与回调地址
 #[tauri::command]
 pub async fn oauth_prepare(
     state: State<'_, OAuthState>,
+    port: u16,
     redirect_path: String,
 ) -> Result<PrepareResult, String> {
-    prepare(state.inner(), &redirect_path).await
+    prepare(state.inner(), port, &redirect_path).await
 }
 
 /// 打开系统默认浏览器访问授权页
@@ -150,16 +174,39 @@ pub async fn oauth_cancel(state: State<'_, OAuthState>) -> Result<(), String> {
 
 /// 用系统默认浏览器打开 URL（零依赖：调用各平台原生命令，不等待进程退出）
 fn open_browser(url: &str) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    let spawned = Command::new("cmd").args(["/C", "start", "", url]).spawn();
-    #[cfg(target_os = "macos")]
-    let spawned = Command::new("open").arg(url).spawn();
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let spawned = Command::new("xdg-open").arg(url).spawn();
+    let mut command = browser_command(url);
 
-    spawned
+    command
+        .spawn()
         .map(|_| ())
         .map_err(|error| format!("打开系统浏览器失败：{error}"))
+}
+
+/// 构造打开浏览器的命令。
+///
+/// Windows 必须**绕过 cmd.exe**：授权 URL 里带 `&`（参数分隔）与 `%`
+/// （percent-encoding），`cmd /C start` 会把 `&` 当命令分隔符把 URL 截断
+/// （实测只留给浏览器 `?response_type=code`，SSO 返回 client_id is required），
+/// `%` 还会被当变量展开。`rundll32` 由 CreateProcess 直接传 argv，URL 原样送达。
+#[cfg(target_os = "windows")]
+fn browser_command(url: &str) -> Command {
+    let mut command = Command::new("rundll32");
+    command.args(["url.dll,FileProtocolHandler", url]);
+    command
+}
+
+#[cfg(target_os = "macos")]
+fn browser_command(url: &str) -> Command {
+    let mut command = Command::new("open");
+    command.arg(url);
+    command
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn browser_command(url: &str) -> Command {
+    let mut command = Command::new("xdg-open");
+    command.arg(url);
+    command
 }
 
 /// accept 循环：命中回调路径则回写结果页并结束，其余请求回 404 后继续等待
@@ -400,12 +447,38 @@ mod tests {
         assert_eq!(normalize_path("/cb"), "/cb");
     }
 
+    /// 回归：授权 URL 必须原样传给浏览器进程。
+    /// 历史缺陷：Windows 走 `cmd /C start`，URL 里的 `&` 被当命令分隔符截断，
+    /// 浏览器只收到 `?response_type=code`，SSO 报 client_id is required。
+    #[test]
+    fn browser_command_passes_authorize_url_verbatim() {
+        let url = "https://login.eveonline.com/v2/oauth/authorize?response_type=code\
+                   &redirect_uri=http%3A%2F%2F127.0.0.1%3A53210%2Fcallback\
+                   &client_id=abc123&scope=esi-assets.read_assets.v1+esi-wallet.read_character_wallet.v1\
+                   &state=xyz&code_challenge=chal&code_challenge_method=S256";
+        let command = browser_command(url);
+
+        #[cfg(target_os = "windows")]
+        assert_eq!(command.get_program().to_string_lossy(), "rundll32");
+
+        // 关键：URL 是**单个未修改**的参数（`&` 与 `%` 不做任何转义）
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            args.iter().any(|arg| arg == url),
+            "URL 未被原样传入（可能被 shell 截断/转义）：{args:?}"
+        );
+    }
+
     #[tokio::test]
     async fn loopback_receives_callback() {
         let state = OAuthState::default();
-        let prepared = prepare(&state, "/callback").await.expect("绑定回环端口失败");
-        assert!(prepared.redirect_uri.starts_with("http://127.0.0.1:"));
-        assert!(prepared.redirect_uri.ends_with("/callback"));
+        let prepared = prepare(&state, 24565, "/callback").await.expect("绑定回环端口失败");
+        assert_eq!(prepared.port, 24565);
+        // 回调地址必须逐字等于 CCP 后台注册值（SSO 精确匹配）
+        assert_eq!(prepared.redirect_uri, "http://127.0.0.1:24565/callback");
 
         // 模拟浏览器重定向：真实 TCP 连接访问回调地址
         let request = format!(
@@ -437,7 +510,7 @@ mod tests {
     #[tokio::test]
     async fn loopback_ignores_other_paths_then_accepts_callback() {
         let state = OAuthState::default();
-        let prepared = prepare(&state, "/callback").await.expect("绑定回环端口失败");
+        let prepared = prepare(&state, 24566, "/callback").await.expect("绑定回环端口失败");
 
         // 先来一个 favicon 请求（应被忽略）
         let mut noise = TcpStream::connect(("127.0.0.1", prepared.port))
@@ -469,27 +542,36 @@ mod tests {
     #[tokio::test]
     async fn wait_callback_timeout_releases_port() {
         let state = OAuthState::default();
-        let prepared = prepare(&state, "/callback").await.expect("绑定回环端口失败");
+        let prepared = prepare(&state, 24567, "/callback").await.expect("绑定回环端口失败");
 
         let result = wait_callback(&state, 100).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("超时"));
 
-        // 超时后端口应已释放：可重新绑定同一端口
-        assert!(TcpListener::bind(("127.0.0.1", prepared.port)).await.is_ok());
+        // 超时后端口应已释放：可重新绑定同一端口（中止到释放有竞态，短暂重试）
+        let mut released = false;
+        for _ in 0..20 {
+            if TcpListener::bind(("127.0.0.1", prepared.port)).await.is_ok() {
+                released = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(released, "超时后回环端口 {} 未被释放", prepared.port);
     }
 
+    /// 固定端口的回归：重新授权必须先释放旧监听器再绑同一端口，
+    /// 且只有**最新**监听器接收回调（旧流程以「会话已结束」收场）。
     #[tokio::test]
     async fn prepare_again_releases_previous_session() {
         let state = OAuthState::default();
-        let first = prepare(&state, "/callback").await.expect("首次绑定失败");
-        let second = prepare(&state, "/callback").await.expect("二次绑定失败");
+        let first = prepare(&state, 24568, "/callback").await.expect("首次绑定失败");
+        let second = prepare(&state, 24568, "/callback").await.expect("二次绑定失败");
 
-        assert_ne!(first.port, second.port);
-        // 旧端口已释放
-        assert!(TcpListener::bind(("127.0.0.1", first.port)).await.is_ok());
+        // 固定端口：两次应绑到同一端口
+        assert_eq!(first.port, second.port);
 
-        // 当前会话应是第二次：回调打到第二个端口才能被收到
+        // 当前会话应是第二次：回调打到该端口由最新监听器接收
         let mut client = TcpStream::connect(("127.0.0.1", second.port))
             .await
             .expect("连接回环端口失败");

@@ -10,6 +10,7 @@ import {
   exchangeCode,
   generatePkce,
   generateState,
+  OAUTH_LOOPBACK_PORT,
   type TokenHttp,
   type TokenSet,
 } from './oauth';
@@ -30,8 +31,8 @@ export interface CallbackPayload {
 
 /** 宿主提供的回环授权能力（Rust 侧实现，测试可注入假实现） */
 export interface LoopbackServer {
-  /** 绑定 127.0.0.1 随机端口，返回端口与完整回调地址 */
-  prepare(redirectPath: string): Promise<{ port: number; redirectUri: string }>;
+  /** 绑定 127.0.0.1 指定端口（须与 CCP 注册的回调地址一致），返回端口与完整回调地址 */
+  prepare(port: number, redirectPath: string): Promise<{ port: number; redirectUri: string }>;
   /** 用系统默认浏览器打开 URL */
   openBrowser(url: string): Promise<void>;
   /** 等待浏览器回调（超时抛错） */
@@ -69,6 +70,8 @@ export interface OAuthFlowOptions {
   loopback: LoopbackServer;
   /** 回调路径，默认 `/callback` */
   redirectPath?: string;
+  /** 回环监听端口，默认 `OAUTH_LOOPBACK_PORT`（须与 CCP 注册的回调地址一致） */
+  loopbackPort?: number;
   /** 等待回调超时（毫秒），默认 5 分钟 */
   timeoutMs?: number;
   /** 随机源（测试注入以获得可复现的 PKCE/state） */
@@ -85,10 +88,11 @@ export interface OAuthFlowOptions {
  */
 export async function runOAuthFlow(options: OAuthFlowOptions): Promise<TokenSet> {
   const redirectPath = options.redirectPath ?? DEFAULT_REDIRECT_PATH;
+  const port = options.loopbackPort ?? OAUTH_LOOPBACK_PORT;
   const timeoutMs = options.timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
   const now = options.now ?? Date.now;
 
-  const { redirectUri } = await options.loopback.prepare(redirectPath);
+  const { redirectUri } = await options.loopback.prepare(port, redirectPath);
 
   try {
     const pkce = await generatePkce(options.randomBytes);

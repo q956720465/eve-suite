@@ -159,7 +159,7 @@ eve-suite/
 ### 4\.3 个人数据 OAuth Scopes
 
 ```
-esi-assets · esi-wallet · esi-contracts · esi-market · esi-industry（含采矿账簿） · esi-loyalty.read_loyalty_points
+esi-assets · esi-wallet · esi-contracts · esi-market · esi-industry（含采矿账簿） · esi-characters.read_loyalty（忠诚点）
 ```
 
 ### 4\.4 限流策略（全局）

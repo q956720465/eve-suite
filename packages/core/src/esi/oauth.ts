@@ -13,6 +13,14 @@ export const SSO_TOKEN_ENDPOINT = `${SSO_ISSUER}/v2/oauth/token`;
 export const SSO_VERIFY_ENDPOINT = `${SSO_ISSUER}/oauth/verify`;
 export const SSO_REVOKE_ENDPOINT = `${SSO_ISSUER}/v2/oauth/revoke`;
 
+/**
+ * 本地回环监听的**固定**端口（P3-8 实测：EVE SSO 要求回调地址与 CCP 后台注册值
+ * 完全一致——含端口与路径，不采纳 RFC 8252 的回环动态端口豁免，随机端口会被拒
+ * `invalid_request: The redirect URL does not match...`）。
+ * CCP 后台注册的回调地址必须精确为 `http://127.0.0.1:14565/callback`。
+ */
+export const OAUTH_LOOPBACK_PORT = 14565;
+
 /** 个人数据所需 scopes（方案文档 §4.3） */
 export const CHARACTER_SCOPES: readonly string[] = [
   'esi-assets.read_assets.v1',
@@ -21,7 +29,8 @@ export const CHARACTER_SCOPES: readonly string[] = [
   'esi-markets.read_character_orders.v1',
   'esi-industry.read_character_jobs.v1',
   'esi-industry.read_character_mining.v1',
-  'esi-loyalty.read_loyalty_points.v1',
+  // 注意：忠诚点 scope 归属 esi-characters 组（ESI 规范中不存在 esi-loyalty.*）
+  'esi-characters.read_loyalty.v1',
 ];
 
 export interface PkcePair {

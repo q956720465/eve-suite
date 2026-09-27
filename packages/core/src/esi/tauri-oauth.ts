@@ -18,8 +18,11 @@ interface PrepareResponse {
 /** 创建基于 Rust 回环服务的宿主能力 */
 export function createTauriLoopbackServer(): LoopbackServer {
   return {
-    prepare(redirectPath: string = DEFAULT_REDIRECT_PATH): Promise<PrepareResponse> {
-      return invoke<PrepareResponse>('oauth_prepare', { redirectPath });
+    prepare(
+      port: number,
+      redirectPath: string = DEFAULT_REDIRECT_PATH,
+    ): Promise<PrepareResponse> {
+      return invoke<PrepareResponse>('oauth_prepare', { port, redirectPath });
     },
 
     async openBrowser(url: string): Promise<void> {

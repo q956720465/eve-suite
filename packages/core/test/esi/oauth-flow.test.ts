@@ -9,7 +9,7 @@ import {
   type CallbackPayload,
   type LoopbackServer,
 } from '../../src/esi/oauth-flow';
-import { SSO_TOKEN_ENDPOINT, type TokenHttp } from '../../src/esi/oauth';
+import { OAUTH_LOOPBACK_PORT, SSO_TOKEN_ENDPOINT, type TokenHttp } from '../../src/esi/oauth';
 
 /** 固定随机源：按请求长度填充，保证 PKCE/state 可复现且互不相同 */
 const fixedRandom = (length: number): Uint8Array => new Uint8Array(length).fill(9);
@@ -27,6 +27,8 @@ interface FakeLoopback {
   server: LoopbackServer;
   /** openBrowser 收到的授权 URL */
   opened: string[];
+  /** prepare 收到的监听端口 */
+  preparedPorts: number[];
   /** prepare 收到的回调路径 */
   preparedPaths: string[];
   /** waitCallback 收到的超时值 */
@@ -34,18 +36,20 @@ interface FakeLoopback {
   cancels: number;
 }
 
-/** 构造假回环服务：prepare 立即返回固定端口，waitCallback 返回预置回调或抛错 */
-function createFakeLoopback(result: CallbackPayload | Error, port = 51234): FakeLoopback {
+/** 构造假回环服务：prepare 原样回显端口与路径，waitCallback 返回预置回调或抛错 */
+function createFakeLoopback(result: CallbackPayload | Error): FakeLoopback {
   const fake: FakeLoopback = {
     server: {} as LoopbackServer,
     opened: [],
+    preparedPorts: [],
     preparedPaths: [],
     timeouts: [],
     cancels: 0,
   };
 
   fake.server = {
-    async prepare(redirectPath: string) {
+    async prepare(port: number, redirectPath: string) {
+      fake.preparedPorts.push(port);
       fake.preparedPaths.push(redirectPath);
       return { port, redirectUri: `http://127.0.0.1:${port}${redirectPath}` };
     },
@@ -119,15 +123,18 @@ describe('授权流程编排', () => {
     expect(tokens.characterId).toBe(2112625428);
     expect(tokens.characterName).toBe('Test Pilot');
 
-    // 回环：默认回调路径，成功路径不应取消
+    // 回环：默认端口与回调路径，成功路径不应取消
+    expect(loopback.preparedPorts).toEqual([OAUTH_LOOPBACK_PORT]);
     expect(loopback.preparedPaths).toEqual([DEFAULT_REDIRECT_PATH]);
     expect(loopback.cancels).toBe(0);
 
-    // 授权 URL 携带随机端口回调地址、state 与 S256 挑战
+    // 授权 URL 携带固定端口回调地址、state 与 S256 挑战
     expect(loopback.opened).toHaveLength(1);
     const url = new URL(loopback.opened[0]);
     expect(url.origin + url.pathname).toBe('https://login.eveonline.com/v2/oauth/authorize');
-    expect(url.searchParams.get('redirect_uri')).toBe('http://127.0.0.1:51234/callback');
+    expect(url.searchParams.get('redirect_uri')).toBe(
+      `http://127.0.0.1:${OAUTH_LOOPBACK_PORT}/callback`,
+    );
     expect(url.searchParams.get('state')).toBe(EXPECTED_STATE);
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     expect(url.searchParams.get('code_challenge')).not.toBeNull();
@@ -143,7 +150,7 @@ describe('授权流程编排', () => {
     expect(sent[0].client_id).toBe('client-1');
   });
 
-  it('自定义回调路径与超时会透传给回环服务', async () => {
+  it('自定义回调路径、端口与超时会透传给回环服务', async () => {
     const { http } = createTokenHttp(200, {
       access_token: makeJwt({ sub: 'CHARACTER:EVE:1' }),
       refresh_token: 'r',
@@ -157,14 +164,16 @@ describe('授权流程编排', () => {
       tokenHttp: http,
       loopback: loopback.server,
       redirectPath: '/cb',
+      loopbackPort: 23456,
       timeoutMs: 1234,
       randomBytes: fixedRandom,
     });
 
+    expect(loopback.preparedPorts).toEqual([23456]);
     expect(loopback.preparedPaths).toEqual(['/cb']);
     expect(loopback.timeouts).toEqual([1234]);
     const url = new URL(loopback.opened[0]);
-    expect(url.searchParams.get('redirect_uri')).toBe('http://127.0.0.1:51234/cb');
+    expect(url.searchParams.get('redirect_uri')).toBe('http://127.0.0.1:23456/cb');
   });
 
   it('默认超时为 5 分钟', async () => {
