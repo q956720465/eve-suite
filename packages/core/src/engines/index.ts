@@ -1,4 +1,4 @@
-/** 四大引擎出口（方案 §3.2）：估值 / 蓝图 / LP / 矿石。当前已落地估值引擎。 */
+/** 四大引擎出口（方案 §3.2）：估值 / 蓝图 / LP / 矿石。当前已落地估值与蓝图成本引擎。 */
 export {
   DEFAULT_OUTLIER_MULTIPLE,
   DEFAULT_VALUATION_BASIS,
@@ -19,3 +19,24 @@ export type {
   ValuationOptions,
   ValuationSource,
 } from './valuation';
+
+export {
+  DEFAULT_BLUEPRINT_ACTIVITY,
+  MAX_MATERIAL_EFFICIENCY,
+  MAX_TIME_EFFICIENCY,
+  adjustJobSeconds,
+  adjustMaterialQuantity,
+  computeBlueprintCost,
+  getBlueprintActivities,
+  getBlueprintMaterials,
+  getBlueprintProducts,
+  normalizeRuns,
+} from './blueprint';
+export type {
+  BlueprintActivity,
+  BlueprintActivityInfo,
+  BlueprintCostOptions,
+  BlueprintCostResult,
+  BlueprintMaterialLine,
+  BlueprintProduct,
+} from './blueprint';

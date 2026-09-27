@@ -72,3 +72,38 @@ export async function insertStats(db: DbAdapter, input: MarketStatsInput): Promi
     [input.regionId ?? JITA, input.typeId, input.bestSell ?? null, input.p5Sell ?? null],
   );
 }
+
+export interface BlueprintIoInput {
+  direction: 'input' | 'output';
+  typeId: number;
+  quantity: number;
+  activity?: string;
+}
+
+export interface BlueprintFixture {
+  blueprintTypeId: number;
+  maxProductionLimit?: number | null;
+  activities?: readonly { activity: string; timeSeconds?: number | null }[];
+  io?: readonly BlueprintIoInput[];
+}
+
+/** 插入一个蓝图（主表 + 活动 + 投入/产出） */
+export async function insertBlueprint(db: DbAdapter, fixture: BlueprintFixture): Promise<void> {
+  await db.execute('INSERT INTO sde_blueprints (blueprint_type_id, max_production_limit) VALUES (?, ?)', [
+    fixture.blueprintTypeId,
+    fixture.maxProductionLimit ?? null,
+  ]);
+  for (const activity of fixture.activities ?? []) {
+    await db.execute(
+      'INSERT INTO sde_blueprint_activities (blueprint_type_id, activity, time_seconds) VALUES (?, ?, ?)',
+      [fixture.blueprintTypeId, activity.activity, activity.timeSeconds ?? null],
+    );
+  }
+  for (const row of fixture.io ?? []) {
+    await db.execute(
+      `INSERT INTO sde_blueprint_io (blueprint_type_id, activity, direction, type_id, quantity)
+       VALUES (?, ?, ?, ?, ?)`,
+      [fixture.blueprintTypeId, row.activity ?? 'manufacturing', row.direction, row.typeId, row.quantity],
+    );
+  }
+}
