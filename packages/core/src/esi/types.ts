@@ -204,6 +204,26 @@ export interface CharacterPublicInfo {
   corporation_id: number;
 }
 
+/** LP 商店报价的兑换材料（一个 offer 可要求多种） */
+export interface LpStoreOfferItem {
+  type_id: number;
+  quantity: number;
+}
+
+/**
+ * LP 商店报价（`/loyalty/stores/{corporation_id}/offers/`，**公共端点，无需授权**）。
+ * `quantity` 为一次兑换产出的物品数量；`ak_cost` 为 CONCORD LP（与军团 LP 不同源）。
+ */
+export interface LpStoreOffer {
+  offer_id: number;
+  type_id: number;
+  quantity: number;
+  lp_cost: number;
+  isk_cost: number;
+  ak_cost: number;
+  required_items: LpStoreOfferItem[];
+}
+
 /** ESI 请求失败原因分类 */
 export type EsiErrorKind =
   /** 网络/传输层失败（可重试） */

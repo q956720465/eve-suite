@@ -12,6 +12,7 @@ import {
   type EsiStatus,
   type IndustryJob,
   type LoyaltyPoints,
+  type LpStoreOffer,
   type MarketHistoryEntry,
   type MarketOrder,
   type MiningObservation,
@@ -231,6 +232,17 @@ export class EsiClient {
   ): Promise<EsiResult<CharacterPublicInfo>> {
     return this.request<CharacterPublicInfo>(
       `${this.baseUrl}/characters/${characterId}/`,
+      options,
+    );
+  }
+
+  /** LP 商店报价（**公共端点，无需授权**；一次返回该军团全部 offer） */
+  fetchLpStoreOffers(
+    corporationId: number,
+    options?: EsiRequestOptions,
+  ): Promise<EsiResult<LpStoreOffer[]>> {
+    return this.request<LpStoreOffer[]>(
+      `${this.baseUrl}/loyalty/stores/${corporationId}/offers/`,
       options,
     );
   }

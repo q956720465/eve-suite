@@ -40,3 +40,11 @@ export type {
   BlueprintMaterialLine,
   BlueprintProduct,
 } from './blueprint';
+
+export { buildLpPortfolio, computeOfferValue, rankLpOffers } from './lp';
+export type {
+  LpOfferRanking,
+  LpOfferValuation,
+  LpPortfolioEntry,
+  RankLpOffersOptions,
+} from './lp';

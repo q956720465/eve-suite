@@ -11,4 +11,5 @@ export * from './sde/index';
 export * from './esi/index';
 export * from './market/index';
 export * from './engines/index';
+export * from './lp/index';
 export * from './personal/index';
