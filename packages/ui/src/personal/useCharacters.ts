@@ -125,7 +125,8 @@ export function useCharacters(): CharactersHandle {
       });
       await runtime.tokenManager.setInitialTokens(tokens);
       await refresh();
-      setMessage(`授权成功：${name}（可点「立即同步」拉取数据）`);
+      // 授权后角色集合变化会由应用壳触发一轮同步，故不再提示用户手点「立即同步」
+      setMessage(`授权成功：${name}（正在自动同步…）`);
     } catch (error) {
       setMessage(describeAuthError(error));
     } finally {

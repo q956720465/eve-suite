@@ -19,8 +19,14 @@ import {
 import { useCallback, useEffect, useState } from 'react';
 
 import { initCoreRuntime } from '../core/runtime';
-import { useCharacters } from './useCharacters';
-import { usePersonalSync } from './usePersonalSync';
+import type { CharactersHandle } from './useCharacters';
+import type { PersonalSyncHandle } from './usePersonalSync';
+
+/** 角色与同步句柄由应用壳（App）在应用级持有后传入：调度不随页签挂载 / 卸载 */
+export interface AssetsPageProps {
+  characters: CharactersHandle;
+  sync: PersonalSyncHandle;
+}
 
 /** 端点中文名（与 PERSONAL_SCOPES 一一对应） */
 const SCOPE_LABELS: Record<PersonalScope, string> = {
@@ -35,10 +41,7 @@ const SCOPE_LABELS: Record<PersonalScope, string> = {
 };
 
 /** 资产页：角色授权 + 同步状态 + 净值 + 资产明细 + 每日快照 */
-export default function AssetsPage() {
-  const characters = useCharacters();
-  const sync = usePersonalSync();
-
+export default function AssetsPage({ characters, sync }: AssetsPageProps) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [scopeStates, setScopeStates] = useState<ScopeStateSummary[]>([]);
   const [overview, setOverview] = useState<AssetOverviewRow[]>([]);
@@ -79,11 +82,7 @@ export default function AssetsPage() {
     setSelectedId((previous) => (previous !== null && ids.includes(previous) ? previous : ids[0]));
   }, [characters.ready, characters.characters]);
 
-  // D4：仅在已有已授权角色时才启动调度（避免空转）
-  useEffect(() => {
-    if (!characters.ready || characters.characters.length === 0) return;
-    void sync.start();
-  }, [characters.ready, characters.characters.length, sync.start]);
+  // 「有角色即启动调度」与「自动轮次后刷新角色卡」已上移到应用壳 App，不随本页挂载
 
   useEffect(() => {
     if (selectedId === null) return;
@@ -91,13 +90,6 @@ export default function AssetsPage() {
       setPanelMessage(`读取角色数据失败：${error instanceof Error ? error.message : String(error)}`),
     );
   }, [selectedId, loadCharacter, sync.lastRound]);
-
-  // 每轮同步完成后刷新角色卡：corporation_id 由同步顺带补齐、last_sync_at 随轮更新，
-  // 不刷新会一直显示授权那一刻的陈旧数据（「未知 (ESI未补齐)」/「--」）
-  useEffect(() => {
-    if (sync.lastRound === null) return;
-    void characters.refresh().catch(() => undefined);
-  }, [sync.lastRound, characters.refresh]);
 
   const toggleExpand = useCallback(
     async (typeId: number) => {
@@ -122,8 +114,11 @@ export default function AssetsPage() {
 
   const handleSyncNow = useCallback(async () => {
     await sync.syncNow();
+    // 手动同步不走调度器轮次（不产生 sync.lastRound），需在此补齐角色卡刷新，
+    // 否则军团 ID / 钱包余额 / 最近同步 会停留在授权那一刻的陈旧值
+    await characters.refresh();
     if (selectedId !== null) await loadCharacter(selectedId);
-  }, [sync, selectedId, loadCharacter]);
+  }, [sync, characters.refresh, selectedId, loadCharacter]);
 
   const handleSnapshot = useCallback(async () => {
     if (selectedId === null) return;

@@ -1,12 +1,14 @@
 import { CORE_VERSION } from '@eve-suite/core';
 import { initDatabase } from '@eve-suite/core/db/tauri';
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import MarketPage from './market/MarketPage';
 import { useMarketCollector } from './market/useMarketCollector';
 import WatchlistPage from './market/WatchlistPage';
 import AssetsPage from './personal/AssetsPage';
+import { useCharacters } from './personal/useCharacters';
+import { usePersonalSync } from './personal/usePersonalSync';
 import SdePage from './sde/SdePage';
 
 type Tab = 'sde' | 'market' | 'watchlist' | 'assets';
@@ -26,6 +28,37 @@ export default function App() {
 
   // 行情采集在应用级持有：切页签不中断，也不重复初始化
   const collector = useMarketCollector();
+
+  // 个人数据（授权 + 同步调度）同样在应用级持有：调度不依赖当前页签，
+  // 「启动即同步」在应用启动后立即生效，而不是等到访问「资产」页
+  const characters = useCharacters();
+  const personalSync = usePersonalSync();
+  const lastCharacterIdsRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!characters.ready || characters.characters.length === 0) return;
+    void personalSync.start();
+  }, [characters.ready, characters.characters.length, personalSync.start]);
+
+  // 角色集合变化（新授权、登出后重新授权）→ 立即补跑一轮，不等下个周期。
+  // 首次就绪只记录：应用启动那一轮由 start() 的「启动即同步」负责。
+  const characterIdsKey = characters.characters
+    .map((item) => item.characterId)
+    .sort((left, right) => left - right)
+    .join(',');
+  useEffect(() => {
+    if (!characters.ready) return;
+    const previous = lastCharacterIdsRef.current;
+    lastCharacterIdsRef.current = characterIdsKey;
+    if (previous === null || characterIdsKey.length === 0 || previous === characterIdsKey) return;
+    void personalSync.kick();
+  }, [characters.ready, characterIdsKey, personalSync.kick]);
+
+  // 自动轮次完成后刷新角色卡：corporation_id / last_sync_at 随轮更新
+  useEffect(() => {
+    if (personalSync.lastRound === null) return;
+    void characters.refresh().catch(() => undefined);
+  }, [personalSync.lastRound, characters.refresh]);
 
   useEffect(() => {
     invoke<string>('app_version')
@@ -80,7 +113,7 @@ export default function App() {
       {tab === 'sde' && <SdePage />}
       {tab === 'market' && <MarketPage collector={collector} />}
       {tab === 'watchlist' && <WatchlistPage />}
-      {tab === 'assets' && <AssetsPage />}
+      {tab === 'assets' && <AssetsPage characters={characters} sync={personalSync} />}
     </main>
   );
 }

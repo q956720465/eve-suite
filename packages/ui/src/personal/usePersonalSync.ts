@@ -28,6 +28,8 @@ export interface PersonalSyncHandle {
   stop: () => void;
   togglePause: () => void;
   syncNow: () => Promise<void>;
+  /** 角色集合变化（如新授权）后立即补跑一轮；暂停或调度未启动时忽略 */
+  kick: () => Promise<void>;
   /** 用户重新授权后解除停摆 */
   clearReauth: (characterId: number) => void;
 }
@@ -179,6 +181,16 @@ export function usePersonalSync(): PersonalSyncHandle {
     setReauthCharacters((previous) => previous.filter((id) => id !== characterId));
   }, []);
 
+  /**
+   * 立即补跑一轮（角色集合变化时用，例如刚完成授权）。
+   * 暂停或调度未启动时忽略；在途轮次由 runOnce 的单飞语义复用，不叠轮。
+   */
+  const kick = useCallback(async () => {
+    const scheduler = schedulerRef.current;
+    if (scheduler === null || !scheduler.isRunning || scheduler.isPaused) return;
+    await scheduler.runOnce();
+  }, []);
+
   useEffect(() => {
     return () => {
       schedulerRef.current?.stop();
@@ -197,6 +209,7 @@ export function usePersonalSync(): PersonalSyncHandle {
     stop,
     togglePause,
     syncNow,
+    kick,
     clearReauth,
   };
 }

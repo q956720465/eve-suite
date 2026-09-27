@@ -64,8 +64,9 @@
 | P3-4 迁移 0004 个人表 | ✅ 完成 | 10 张表（9 张个人/净值 + 1 张同步状态）+ 9 个索引；字段按官方 OpenAPI 3.1 核对；真实库 v3→v4 实测通过 |
 | P3-5 七类数据同步 | ✅ 完成 | `PersonalSyncer`（8 端点水位：assets / wallet_balance / wallet_journal / orders / contracts / industry / mining / loyalty）；覆盖型整体替换、追加型按主键 upsert（journal 按 entry_id、mining 按复合键）；分页共享 `esi/paging.ts`（不改 P2 collector）；`insertRows` 加可选 `onConflict`（默认行为不变）；余额与军团 ID 写 `characters`；失败隔离（单 scope 只写该行 last_error，last_ok_at 不变）；认证错误原样记录不包装；8 端点真实未认证请求实测全部 401（路径校验通过，含尾斜杠兼容行为） |
 | P3-6 同步调度 | ✅ 完成 | `PersonalSyncScheduler`（core，纯逻辑可测）：**启动即同步** + 周期（默认 **20 分钟**，可配）；**单飞**（上轮未结束不叠轮）；`pause`/`resume`（计量网络，恢复即补一轮）；**`reauth_required` 停摆**——中止该角色剩余端点、置阻塞态、回调提示，直到 `clearReauthBlock`（其它角色不受影响）。**Cache-Control 遵守**：`EsiResult.cacheControl` 解析 `Cache-Control` + **`Expires`**，按到期时间写入 `personal_sync_state.expires_at`，未到期则整轮不发请求（`skippedReason='cache'`）；`force` 可越过。`personal/repo.ts` 提供角色清单与水位读取 |
-| P3-7 UI 资产页 | ✅ 完成 | 应用级运行时单例（`ui/src/core/runtime.ts`：共享调度器 + `TokenManager` + 钥匙串，含补上的 `createFetchTokenHttp`）；`useCharacters`（授权/登出）、`usePersonalSync`（启停/暂停/立即同步 force/reauth 停摆）；`AssetsPage`（角色卡 + 净值四分项 + 8 端点同步状态 + 资产聚合表可展开到逐条含站名 + 每日快照）；净值口径与快照写入见决策。**P3-8 补丁**：每轮同步完成后刷新角色卡（否则 `corporation_id` / `last_sync_at` 一直显示授权那一刻的陈旧值，表现为「未知 (ESI未补齐)」+「--」）。**该补丁只覆盖自动轮次，手动「立即同步」不刷新卡片**——见「下一步 · 已知待办」） |
+| P3-7 UI 资产页 | ✅ 完成 | 应用级运行时单例（`ui/src/core/runtime.ts`：共享调度器 + `TokenManager` + 钥匙串，含补上的 `createFetchTokenHttp`）；`useCharacters`（授权/登出）、`usePersonalSync`（启停/暂停/立即同步 force/reauth 停摆）；`AssetsPage`（角色卡 + 净值四分项 + 8 端点同步状态 + 资产聚合表可展开到逐条含站名 + 每日快照）；净值口径与快照写入见决策。**P3-8 补丁**：每轮同步完成后刷新角色卡（否则 `corporation_id` / `last_sync_at` 一直显示授权那一刻的陈旧值，表现为「未知 (ESI未补齐)」+「--」）。该补丁只覆盖自动轮次，**手动「立即同步」已由 P3-9 补齐**） |
 | P3-8 真数据端到端验证 | ✅ 完成 | 真实授权（角色 WEEK 813 / 2114553827）+ 本地库核验全绿 + **界面五步全通过**（①立即同步 ②切页签不中断 ③暂停/恢复 ④生成今日快照 ⑤登出清除 + 二次授权 + 重新同步）+ 游戏内读数抽查（**结论待用户回执**）。全部结论见下节 |
+| P3-9 同步/启动时机修复 | ✅ 完成 | P3-8 收尾中暴露的缺陷一并修掉（①②③ 为缺陷，④ 为随之失效的文案）：①**手动「立即同步」后角色卡不刷新**（`syncNow()` 不产生完成信号，卡片刷新只挂在 `sync.lastRound` 上，而收尾重载漏了角色卡）→ `handleSyncNow` 补 `await characters.refresh()`；②**「启动即同步」实际依赖先访问「资产」页**（`start()` 挂在 AssetsPage 的 effect 上）→ 个人数据 hook（`useCharacters` + `usePersonalSync`）上移到**应用壳 App 级**持有，`AssetsPage` 改收 props；③**二次授权后不自动补跑一轮**（`start()` 幂等）→ 新增 `kick()`（暂停 / 未启动时忽略，`scheduler.runOnce()` 本就 public 且自带单飞，故**core 未改**），App 监听角色集合变化即补跑；④授权成功提示语由「（可点「立即同步」拉取数据）」改为「（正在自动同步…）」——补跑自动化后原括注已失真 |
 
 **P3-8 核验记录（2026-09-27，真实库 `%APPDATA%\com.eve-suite.desktop\eve-suite.db`）**：
 - 角色行：`WEEK 813` / `2114553827`，`corporation_id=98446928` **已由同步补齐**，7 个 scopes 齐全（含修正后的 `esi-characters.read_loyalty.v1`）
@@ -84,11 +85,20 @@
   - ⑤「登出并清除本地数据」（二次确认弹窗文案正确）→ 登出成功提示；`characters` / 8 张个人表 / 8 条水位 / `personal:` ETag 8 条 / `networth_snapshots` **全部清零**，钥匙串条目（`refresh-token:2114553827.com.eve-suite.desktop`）消失；**P2/P1 数据零误伤**（`market_orders` 891,667 / `market_stats` 69,722 / `sde_types` 53,060 / `watchlist_items` 1）✓
     - 重新授权（二次授权路径）：授权 URL 参数完整未截断（7 scopes + `redirect_uri=http://127.0.0.1:14565/callback` + state + code_challenge），回环 `127.0.0.1:14565` **重新绑定成功**（OwnerProcess = eve-suite.exe）→ **固定端口「先释放旧监听器再绑同端口」的设计实测生效**（踩坑 #23）
     - 本次 Chrome 的 EVE 登录会话已过期，停在账号密码页需人工登录（字段输入无法自动化，也不应代填）；登录后回调自动完成，应用提示「授权成功：WEEK 813」
-    - 授权后**不会自动补跑一轮**，需点「立即同步」或等 20 分钟周期（`start()` 幂等 + `syncNow()` 不更新 `lastRound`，详见下方已知待办）
+    - 授权后**不会自动补跑一轮**，需点「立即同步」或等 20 分钟周期（`start()` 幂等 + `syncNow()` 不更新 `lastRound`）——**该缺陷已在 P3-9 修复**（新增 `kick()`，见下）
 - 重新同步等价性（登出 → 二次授权 → 立即同步后）：`corporation_id=98446928` 补齐、钱包 `1,426,356,978.92` 与登出前**一致**、`assets` **1495** 与登出前**一致**、`lp_balances` 6 / `wallet_journal` 2 一致、8 条水位与 `personal:` ETag 8 条**全部重建**；本轮「写入 1,504 条」= assets 1495 + lp 6 + journal 2 + characters 1 ✓
 - 快照等价性（重新同步后）：`2026-09-27` 净值 `137,877,416,853.99` = 资产 `136,451,059,875.07` + 钱包 `1,426,356,978.92` ✓（**同日 upsert 只更新不新增**，快照行数恒为 1）
 - 游戏内抽查（用户人工比对）：库内读数已提供 —— 钱包余额 `1,426,356,978.92` ISK、妄想级蓝图（Covetor Blueprint）`6` 张（单价 2,178,000,000）、资产 1495 条 / 610 种、LP 6 条、钱包流水 2 条；**用户比对结论待回执**
 - **净值会随 P2 枢纽行情每 5 分钟刷新而微动**：本轮观测到资产估值在同一天内出现 `136,735,404,335.68` → `136,451,059,875.07` 级别的漂移，属正常（`best_sell` 变动），故「净值卡 = 快照」需在同一时刻比对
+
+**P3-9 实测记录（2026-09-28，真实库）**：
+- 静态：ui `tsc --noEmit` 通过、`pnpm --filter @eve-suite/ui build` 通过；core **219 用例不回归**（P3-9 未改 core）
+- ① 手动「立即同步」后角色卡刷新：先点「暂停自动同步」（排除 20 分钟周期轮次干扰）再点「立即同步」，卡片「最近同步」`00:56:25` → `00:57:48`，**未切页签、未重载**；与库内 `last_sync_at = 2026-09-27T16:57:48.562Z` 逐秒吻合（提示语「立即同步完成：写入 0 条」——force 仍带 If-None-Match，ESI 返回 304 故无写入，水位与 `last_sync_at` 照常推进）
+- ② 应用级启动：应用停在「数据」页（`已授权角色` 不存在，资产页**从未挂载**）重载后不点任何按钮，库内 `last_sync_at` `17:02:27` → `17:03:16`，即「启动即同步」不再依赖访问资产页
+- ③ 角色集合变化补跑：登出清除（`characters` / 8 张个人表 / 水位 / `personal:` ETag 全 0，钥匙串条目消失）→ 二次授权后**未点任何按钮**（全程只点了「授权新角色」），库内 `assets` 1495 / `wallet_journal` 2 / `lp_balances` 6、水位 8 条与 `personal:` ETag 8 条**自动重建**，界面提示「同步完成：1 个角色 · 写入 1,504 条」
+- ④ 文案（授权成功提示语）：随 P3-9 一并改的模板字符串，**仅通过静态检查（tsc/构建）验证**；该串只在 `authorize()` 成功那一刻可见，本次未为它重复做一次登出 + 授权
+- 回归：暂停 / 恢复；切页签往返（**暂停状态现在跨页签保持**，因 hook 已在 App 级）；「行情」页采集状态正常且未重复初始化（行情采集仍是 App 级单实例，P2 未受影响）
+- 核验脚本并发实验：脚本改为 `readOnly: true` 后，在强制同步进行中并发跑 4 次，该轮**未再出现** `database is locked`（单次实验，不足以定论，仍按下方「避开同步写入窗口」执行）
 
 **P3 已确认的决策**：
 - **公司资产不纳入 P3**（需额外 scope 与公司角色权限，留到 P5）
@@ -108,6 +118,10 @@
   - **调度启动条件**：应用内**仅当已有已授权角色**时才启动（无角色不空转）
   - **登出**：删钥匙串条目 + 清内存会话 + 清该角色全部个人数据与水位（**不可恢复**，UI 二次确认）
   - **共享单例**：本轮只新增 `ui/src/core/runtime.ts` 供个人数据使用；P2 `useMarketCollector` 仍自建调度器，**待后续单独立重构方案**（方案 §4.4 要求全局单例）
+- **P3-9 口径（已定）**：
+  - **应用级持有**：个人数据与行情采集一致，在**应用壳 App** 层持有 hook 并向下传 props（`<AssetsPage characters={characters} sync={personalSync} />`）；「启动即同步」「角色集合变化补跑」「自动轮次后刷新角色卡」三个副作用统一放 App，`AssetsPage` 只做展示与交互
+  - **补跑语义**：`kick()` 在**暂停或调度未启动时忽略**（不越过计量网络暂停开关）；在途轮次由 `PersonalSyncScheduler.runOnce()` 的**单飞**语义复用，不叠轮。首次就绪不补跑（启动那一轮由 `start()` 的「启动即同步」负责）
+  - **行为变化**：暂停开关状态现在**跨页签保持**（hook 已上移到 App）；应用启动后不进「资产」页也会同步个人数据
 
 ## 数据库现状
 
@@ -130,9 +144,7 @@
 2. **待推送**：本地有数个提交未推送（起点 `9130776` → `f22249e`，含本次 P3-8 收尾提交）；推送时机由用户掌控（推送后 CI 才会跑）
 3. 已知待办（非阻塞；凡涉及改动已有代码，均需先出方案并确认）：
    - **P2 行情采集未用共享调度器**（方案 §4.4 要求全局令牌桶单例）：`packages/ui/src/market/useMarketCollector.ts` 自建 `RequestScheduler`，与 P3 新增的 `ui/src/core/runtime.ts` 未统一
-   - **登录/同步后 UI 状态刷新时机（P3-8 收尾实测新增）**：
-     - 手动点「立即同步」后**角色卡不刷新**（`usePersonalSync.syncNow()` 不更新 `lastRound`，而卡片刷新只挂在 `lastRound` 变化上）→ 军团 ID / 钱包 / 最近同步 仍是授权那一刻的陈旧值；切页签往返或等下一个 20 分钟自动轮次即自愈。与 P3-8 补丁同一症状类，但补丁只覆盖自动轮次
-     - 二次授权后**不自动补跑一轮**（`PersonalSyncScheduler.start()` 幂等，已在运行则 no-op）→ 需点「立即同步」或等周期（UI 提示语已如此引导）
+   - **core 数据库层对瞬时锁的容错**：连接池 + 外部进程并发时曾观测到该轮同步因 `SQLITE_BUSY`（`database is locked`）整轮失败；根治需评估 `BEGIN IMMEDIATE` / BUSY 重试，属独立议题（P3-9 只把核验脚本改为只读打开，未动 core）
    - 登出是否调 SSO revoke 端点（当前只删本地令牌与数据）
 
 ## 踩坑备忘（重要，勿重蹈）
@@ -194,7 +206,7 @@
 
 | 关注点 | 文件 |
 |---|---|
-| UI 入口 / 导航 | `packages/ui/src/App.tsx` |
+| UI 入口 / 导航 / **应用级持有**（行情采集 + 个人数据 hook，P3-9） | `packages/ui/src/App.tsx` |
 | UI 数据页（SDE） | `packages/ui/src/sde/SdePage.tsx` |
 | UI 行情页 / 监视页 | `packages/ui/src/market/MarketPage.tsx`、`WatchlistPage.tsx` |
 | UI 采集调度 / 图表 | `packages/ui/src/market/useMarketCollector.ts`、`PriceChart.tsx` |
@@ -233,5 +245,6 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 
 **P3-8 只读核验脚本**（不在仓库内，位于系统临时目录，重装系统/清临时目录后需重建）：
 - `%TEMP%\eve-verify-p38.cjs` —— 用 `node:sqlite` 直读 `%APPDATA%\com.eve-suite.desktop\eve-suite.db`，输出 schema 版本 / characters 行 / 8 张个人表行数 / `personal_sync_state` 水位 / `personal:` ETag 数 / `networth_snapshots` / 按 core 同口径现算的净值 / 资产 Top10（含 SDE 中英文名）/ 钱包账本最近 5 条
-- 运行：`node "$env:TEMP\eve-verify-p38.cjs"`（应用运行中亦可，WAL 只读无冲突）
+- 运行：`node "$env:TEMP\eve-verify-p38.cjs"`（应用运行中亦可）
+- **注意（P3-9 实测修正）**：此前「WAL 只读无冲突」的说法不严谨——脚本当时是**读写打开**（`new DatabaseSync(path)` 默认读写），与应用的写事务并发时曾导致该轮同步 `database is locked`（`SQLITE_BUSY`）整轮失败；现已改为 **`readOnly: true` 打开**，并在同步进行中并发 4 次未复现。**仍建议避开同步写入窗口运行**（正在同步时先别跑）
 - 注意：`node:sqlite` 是实验特性，会打印 ExperimentalWarning，可忽略
