@@ -5,8 +5,12 @@
   "description": "EVE Online 单机桌面工具套件（Tauri 2 + React + 纯 TS 核心包）",
   "packageManager": "pnpm@11.7.0",
   "scripts": {
+    "tauri": "tauri",
     "test": "pnpm -r test",
     "build": "pnpm -r build",
     "dev:ui": "pnpm --filter @eve-suite/ui dev"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.5"
   }
 }
