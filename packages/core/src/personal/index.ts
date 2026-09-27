@@ -56,5 +56,27 @@ export type {
   TimerHandle,
 } from './scheduler';
 
-export { getCharacterScopeStates, listCharacterIds, listCharacters } from './repo';
-export type { CharacterSummary, ScopeStateSummary } from './repo';
+export {
+  clearCharacterData,
+  getCharacterScopeStates,
+  listCharacterIds,
+  listCharacters,
+  removeCharacter,
+  upsertCharacter,
+} from './repo';
+export type { CharacterSummary, ScopeStateSummary, UpsertCharacterInput } from './repo';
+
+export {
+  computeNetWorth,
+  DEFAULT_VALUATION_REGION_ID,
+  listSnapshots,
+  writeDailySnapshot,
+} from './networth';
+export type {
+  NetWorthBreakdown,
+  NetWorthSnapshot,
+  WriteSnapshotOptions,
+} from './networth';
+
+export { getAssetDetails, getAssetOverview } from './assets';
+export type { AssetDetailRow, AssetOverviewRow } from './assets';

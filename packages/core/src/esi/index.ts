@@ -24,7 +24,7 @@ export { readHeader, readNumberHeader } from './http';
 export { DEFAULT_ESI_BASE_URL, EsiClient, parseCacheControl } from './client';
 export type { EsiAuthProvider, EsiClientOptions, EsiRequestOptions } from './client';
 
-export { createFetchHttpClient } from './fetch-http';
+export { createFetchHttpClient, createFetchTokenHttp } from './fetch-http';
 
 export {
   buildAuthorizeUrl,

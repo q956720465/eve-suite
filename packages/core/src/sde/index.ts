@@ -54,8 +54,17 @@ export type { ImportSdeOptions } from './import';
 export {
   DEFAULT_SEARCH_LIMIT,
   getSdeStatus,
+  getStationNames,
   getTypeDetail,
+  getTypeNames,
   searchStations,
   searchTypes,
 } from './repo';
-export type { SdeStatus, StationSearchHit, TypeDetail, TypeSearchHit } from './repo';
+export type {
+  SdeStatus,
+  StationNameEntry,
+  StationSearchHit,
+  TypeDetail,
+  TypeNameEntry,
+  TypeSearchHit,
+} from './repo';

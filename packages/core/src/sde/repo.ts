@@ -141,6 +141,89 @@ export async function getTypeDetail(db: DbAdapter, typeId: number): Promise<Type
   return rows[0] ?? null;
 }
 
+/** 物品名（批量查询结果） */
+export interface TypeNameEntry {
+  nameEn: string;
+  nameZh: string | null;
+}
+
+/** 单次批量查询的 id 数（与 SQLite 变量上限保持安全距离） */
+const TYPE_NAME_CHUNK = 500;
+
+/**
+ * 批量取物品名（资产 / 挂单等列表展示用）。
+ * 未收录于 SDE 的 id 不会出现在结果中，调用方自行兜底显示 `type_id`。
+ */
+export async function getTypeNames(
+  db: DbAdapter,
+  typeIds: readonly number[],
+): Promise<Map<number, TypeNameEntry>> {
+  const result = new Map<number, TypeNameEntry>();
+  const unique = [...new Set(typeIds)];
+  for (let offset = 0; offset < unique.length; offset += TYPE_NAME_CHUNK) {
+    const chunk = unique.slice(offset, offset + TYPE_NAME_CHUNK);
+    if (chunk.length === 0) continue;
+    const placeholders = chunk.map(() => '?').join(', ');
+    const rows = await db.select<{ typeId: number; nameEn: string; nameZh: string | null }>(
+      `SELECT type_id AS typeId, name_en AS nameEn, name_zh AS nameZh
+         FROM sde_types
+        WHERE type_id IN (${placeholders})`,
+      chunk,
+    );
+    for (const row of rows) {
+      result.set(row.typeId, { nameEn: row.nameEn, nameZh: row.nameZh });
+    }
+  }
+  return result;
+}
+
+/** 空间站名（批量查询结果，含所在星系） */
+export interface StationNameEntry {
+  nameEn: string;
+  nameZh: string | null;
+  systemNameEn: string;
+  systemNameZh: string | null;
+}
+
+/**
+ * 批量取空间站名（资产 / 挂单的地点展示用）。
+ * 未收录的 id 不会出现在结果中（资产地点也可能是集装箱等物品，调用方兜底显示 id）。
+ */
+export async function getStationNames(
+  db: DbAdapter,
+  stationIds: readonly number[],
+): Promise<Map<number, StationNameEntry>> {
+  const result = new Map<number, StationNameEntry>();
+  const unique = [...new Set(stationIds)];
+  for (let offset = 0; offset < unique.length; offset += TYPE_NAME_CHUNK) {
+    const chunk = unique.slice(offset, offset + TYPE_NAME_CHUNK);
+    if (chunk.length === 0) continue;
+    const placeholders = chunk.map(() => '?').join(', ');
+    const rows = await db.select<{
+      stationId: number;
+      nameEn: string;
+      nameZh: string | null;
+      systemNameEn: string;
+      systemNameZh: string | null;
+    }>(
+      `SELECT station_id AS stationId, name_en AS nameEn, name_zh AS nameZh,
+              system_name_en AS systemNameEn, system_name_zh AS systemNameZh
+         FROM sde_stations
+        WHERE station_id IN (${placeholders})`,
+      chunk,
+    );
+    for (const row of rows) {
+      result.set(row.stationId, {
+        nameEn: row.nameEn,
+        nameZh: row.nameZh,
+        systemNameEn: row.systemNameEn,
+        systemNameZh: row.systemNameZh,
+      });
+    }
+  }
+  return result;
+}
+
 /** 空间站搜索：站名 / 星系名 / 星域名 三处匹配（如搜 Jita 可命中 The Forge 的站） */
 export async function searchStations(
   db: DbAdapter,

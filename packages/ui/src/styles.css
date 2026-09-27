@@ -214,7 +214,8 @@ button:disabled {
   color: #9fe8ff;
 }
 
-.market {
+.market,
+.assets {
   display: flex;
   flex-direction: column;
   gap: 14px;

@@ -6,14 +6,16 @@ import { useEffect, useState } from 'react';
 import MarketPage from './market/MarketPage';
 import { useMarketCollector } from './market/useMarketCollector';
 import WatchlistPage from './market/WatchlistPage';
+import AssetsPage from './personal/AssetsPage';
 import SdePage from './sde/SdePage';
 
-type Tab = 'sde' | 'market' | 'watchlist';
+type Tab = 'sde' | 'market' | 'watchlist' | 'assets';
 
 const TABS: readonly { id: Tab; label: string }[] = [
   { id: 'sde', label: '数据' },
   { id: 'market', label: '行情' },
   { id: 'watchlist', label: '监视' },
+  { id: 'assets', label: '资产' },
 ];
 
 /** 应用壳：环境状态 + 页签导航 + 各功能页（P2 起行情采集在应用级运行） */
@@ -63,7 +65,7 @@ export default function App() {
             ))}
           </nav>
         </div>
-        <p className="subtitle">P2 行情模块 · 5 枢纽采集 · 跨枢纽比价 · 监视列表</p>
+        <p className="subtitle">P3 个人数据 · 资产与净值 · 行情采集 · 监视列表</p>
         <p className="meta">
           core 版本：<code>{CORE_VERSION}</code>
         </p>
@@ -78,6 +80,7 @@ export default function App() {
       {tab === 'sde' && <SdePage />}
       {tab === 'market' && <MarketPage collector={collector} />}
       {tab === 'watchlist' && <WatchlistPage />}
+      {tab === 'assets' && <AssetsPage />}
     </main>
   );
 }
