@@ -37,20 +37,18 @@ export async function runMigrations(
 
   let applied = 0;
   for (const migration of pending) {
-    await db.execute('BEGIN');
     try {
-      await db.execute(migration.sql);
-      await db.execute(
-        'INSERT INTO schema_migrations (version, name) VALUES (?, ?)',
-        [migration.version, migration.name],
-      );
-      await db.execute('COMMIT');
+      // 整条迁移在单个事务内执行：失败整体回滚，不留半成品结构
+      await db.transaction(async (tx) => {
+        for (const statement of toStatements(migration)) {
+          await tx.execute(statement);
+        }
+        await tx.execute(
+          'INSERT INTO schema_migrations (version, name) VALUES (?, ?)',
+          [migration.version, migration.name],
+        );
+      });
     } catch (error) {
-      try {
-        await db.execute('ROLLBACK');
-      } catch {
-        // 事务可能未成功开启，忽略回滚失败，保留原始错误
-      }
       throw new Error(
         `迁移 ${migration.version}_${migration.name} 执行失败：${
           error instanceof Error ? error.message : String(error)
@@ -63,6 +61,11 @@ export async function runMigrations(
   }
 
   return { applied, schemaVersion };
+}
+
+/** 取迁移的全部语句：statements 模式逐条返回，sql 模式包装为单元素数组 */
+function toStatements(migration: Migration): readonly string[] {
+  return migration.statements ? migration.statements : [migration.sql];
 }
 
 function assertUniqueVersions(migrations: readonly Migration[]): void {

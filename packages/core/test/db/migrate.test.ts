@@ -29,26 +29,48 @@ describe('迁移执行器', () => {
     expect(await tableExists(db, 'schema_migrations')).toBe(true);
   });
 
-  it('应用生产迁移：settings 表建立且版本记录正确', async () => {
+  it('应用生产迁移：settings 与 SDE 表建立且版本记录正确', async () => {
     const db = createNodeSqliteAdapter();
     const result = await runMigrations(db, MIGRATIONS);
-    expect(result).toEqual({ applied: 1, schemaVersion: 1 });
+    expect(result).toEqual({
+      applied: MIGRATIONS.length,
+      schemaVersion: MIGRATIONS.length,
+    });
     expect(await tableExists(db, 'settings')).toBe(true);
+    expect(await tableExists(db, 'sde_types')).toBe(true);
+    expect(await tableExists(db, 'sde_stations')).toBe(true);
 
-    const rows = await db.select<{ version: number; name: string }>(
-      'SELECT version, name FROM schema_migrations ORDER BY version',
+    const rows = await db.select<{ version: number }>(
+      'SELECT version FROM schema_migrations ORDER BY version',
     );
-    expect(rows).toEqual([{ version: 1, name: 'settings' }]);
+    expect(rows.map((row) => row.version)).toEqual(MIGRATIONS.map((migration) => migration.version));
   });
 
   it('幂等：重复执行不会重复应用', async () => {
     const db = createNodeSqliteAdapter();
     await runMigrations(db, MIGRATIONS);
     const second = await runMigrations(db, MIGRATIONS);
-    expect(second).toEqual({ applied: 0, schemaVersion: 1 });
+    expect(second).toEqual({ applied: 0, schemaVersion: MIGRATIONS.length });
 
     const count = await db.select<{ n: number }>('SELECT COUNT(*) AS n FROM schema_migrations');
-    expect(count[0].n).toBe(1);
+    expect(count[0].n).toBe(MIGRATIONS.length);
+  });
+
+  it('statements 模式：多条语句逐条执行（规避运行时只执行首条的陷阱）', async () => {
+    const db = createNodeSqliteAdapter();
+    const multi: Migration = {
+      version: 1,
+      name: 'multi',
+      statements: [
+        'CREATE TABLE multi_a (id INTEGER PRIMARY KEY);',
+        'CREATE TABLE multi_b (id INTEGER PRIMARY KEY);',
+        'CREATE INDEX idx_multi_a ON multi_a (id);',
+      ],
+    };
+    const result = await runMigrations(db, [multi]);
+    expect(result).toEqual({ applied: 1, schemaVersion: 1 });
+    expect(await tableExists(db, 'multi_a')).toBe(true);
+    expect(await tableExists(db, 'multi_b')).toBe(true);
   });
 
   it('增量：只应用版本高于当前的迁移', async () => {

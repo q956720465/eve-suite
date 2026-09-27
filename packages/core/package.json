@@ -6,7 +6,8 @@
   "description": "纯 TypeScript 核心逻辑包（ESI 客户端 / 数据库 / 四大引擎 / 同步调度 / 通知），不依赖任何 UI",
   "exports": {
     ".": "./src/index.ts",
-    "./db/tauri": "./src/db/tauri.ts"
+    "./db/tauri": "./src/db/tauri.ts",
+    "./sde/tauri": "./src/sde/tauri.ts"
   },
   "scripts": {
     "test": "vitest run",
@@ -18,6 +19,6 @@
     "vitest": "^5.0.2"
   },
   "dependencies": {
-    "@tauri-apps/plugin-sql": "^2.4.1"
+    "@tauri-apps/api": "2.11.1"
   }
 }

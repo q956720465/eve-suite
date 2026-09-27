@@ -1,15 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "应用主窗口默认权限集（P0：core 默认能力 + SQL 插件读写权限）",
+  "description": "应用主窗口默认权限集（数据库与 SDE 均通过应用自有命令实现，无需插件权限）",
   "windows": [
     "main"
   ],
   "permissions": [
-    "core:default",
-    "sql:allow-load",
-    "sql:allow-execute",
-    "sql:allow-select",
-    "sql:allow-close"
+    "core:default"
   ]
 }

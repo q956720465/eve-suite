@@ -4,7 +4,8 @@ version = "0.0.0"
 description = "EVE Online 单机桌面工具套件"
 authors = ["q956720465"]
 edition = "2021"
-rust-version = "1.77.2"
+# 实际最低版本由依赖决定：reqwest 0.13.x 需 rustc >= 1.85
+rust-version = "1.85"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -20,5 +21,11 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.11.6", features = [] }
-tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 tauri-plugin-log = "2"
+# 数据库：自管 sqlx SQLite 连接池（原 tauri-plugin-sql 的 JS API 无事务能力，已退役）
+sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio"] }
+# SDE 下载与解压（P1）：reqwest 走 rustls 免系统 OpenSSL 依赖；zip 仅需 deflate
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
+futures-util = "0.3.34"
+zip = { version = "4", default-features = false, features = ["deflate"] }
+tokio = { version = "1.53.1", features = ["fs", "io-util", "sync"] }

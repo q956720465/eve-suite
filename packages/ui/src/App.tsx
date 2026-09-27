@@ -3,7 +3,9 @@ import { initDatabase } from '@eve-suite/core/db/tauri';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 
-/** P0 占位界面：验证「UI → core 公共出口」「UI → Rust IPC」「SQLite 迁移骨架」三条链路 */
+import SdePage from './sde/SdePage';
+
+/** 应用壳：环境状态 + 数据页（P1 起逐阶段扩展功能页） */
 export default function App() {
   const [runtime, setRuntime] = useState('检测中…');
   const [database, setDatabase] = useState('检测中…');
@@ -30,17 +32,20 @@ export default function App() {
 
   return (
     <main className="app">
-      <h1>EVE SUITE</h1>
-      <p className="subtitle">P0 骨架 · 空应用</p>
-      <p className="meta">
-        core 版本：<code>{CORE_VERSION}</code>
-      </p>
-      <p className="meta">
-        运行环境：<code>{runtime}</code>
-      </p>
-      <p className="meta">
-        数据库：<code>{database}</code>
-      </p>
+      <header className="app-header">
+        <h1>EVE SUITE</h1>
+        <p className="subtitle">P1 数据基座 · SDE 静态数据</p>
+        <p className="meta">
+          core 版本：<code>{CORE_VERSION}</code>
+        </p>
+        <p className="meta">
+          运行环境：<code>{runtime}</code>
+        </p>
+        <p className="meta">
+          数据库：<code>{database}</code>
+        </p>
+      </header>
+      <SdePage />
     </main>
   );
 }
