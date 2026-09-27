@@ -3,8 +3,8 @@
 > 用途：新会话开局先读本文件 + 方案文档第 8 节，即可定位「做到哪 / 下一步 / 有哪些坑」。
 > 维护规则：每个子模块验收通过后更新一次本文件。
 >
-> **接续入口（新会话从这里开始）**：**P3 已全部完成并验收**（含 P3-8 真数据端到端验证——界面五步全通过、登出/二次授权/重新同步全链路实测）；**P4-1 估值引擎**（唯一定价出口 + 净值/资产页口径切换）与 **P4-2 蓝图成本引擎**（BOM × 引擎价 + ME/TE 折扣）均已验收（真实库零误差、core **264** 用例全绿）。
-> 下一子任务是 **P4-3 LP 比价引擎**（需新迁移 `sde_lp_offers` + 社区 GitHub JSON 拉取；**开工前先出「任务清单 + 验收清单」交用户确认**）。跳到「## 下一步」看待办清单，跳到「## P4 进度」看 P4-1 / P4-2 明细与实测记录。
+> **接续入口（新会话从这里开始）**：**P3 已全部完成并验收**（含 P3-8 真数据端到端验证——界面五步全通过、登出/二次授权/重新同步全链路实测）；**P4-1 估值引擎**（唯一定价出口 + 净值/资产页口径切换）、**P4-2 蓝图成本引擎**（BOM × 引擎价 + ME/TE 折扣）、**P4-3 LP 比价引擎**（ESI 公共 LP 商店 + ISK/LP 排名 + LP 组合）均已验收（真实库 / 真实 ESI 零误差，core **283** 用例全绿）。
+> 下一子任务是 **P4-4 矿石精炼值引擎**（需补 SDE 矿石→矿物映射；**开工前先出「任务清单 + 验收清单」交用户确认**）。跳到「## 下一步」看待办清单，跳到「## P4 进度」看 P4-1 / P4-2 / P4-3 明细与实测记录。
 > 关键外部配置：CCP 应用 Callback URL 必须是 `http://127.0.0.1:14565/callback`（详见决策区与踩坑 #23）。
 
 ## 总览
@@ -15,7 +15,7 @@
 | **P1 SDE 数据基座** | ✅ 全部完成（含 UI 人工复验） | 官方 SDE 下载/转换/入库 + 中英文搜索 |
 | **P2 行情模块** | ✅ 全部完成（含 UI 人工复验） | 5 枢纽 5 分钟采集 + 按需行情 + 监视列表 |
 | **P3 OAuth 个人数据** | ✅ 全部完成（含真数据端到端验证） | 本地回环授权 + 七类数据同步（含调度）+ 资产/净值页；**界面五步验收 + 登出/二次授权/重新同步全链路实测通过** |
-| **P4 四大引擎** | 🔄 进行中（P4-1 / P4-2 已完成） | 估值引擎 + 蓝图成本引擎已落地；余 LP 比价 / 矿石精炼值 |
+| **P4 四大引擎** | 🔄 进行中（P4-1 / P4-2 / P4-3 已完成） | 估值 + 蓝图成本 + LP 比价已落地；余 矿石精炼值 |
 | P5 整合功能 + 全域层 | 未开始 | |
 | P6 分发打磨 | 未开始 | 仓库需由私有转公开；macOS 签名 / 公证 |
 
@@ -129,7 +129,7 @@
 |---|---|---|
 | P4-1 估值引擎 | ✅ 完成 | `engines/valuation.ts`（方案 §6.3 唯一定价出口）：口径 `p5_sell`（默认）/`best_sell`；回退链 **主口径 → 另一口径 → missing**；基准可切区域与站点（站点级按 `market_orders.location_id` 重算）；可选 **10 倍中位数离群过滤**；批量入口 `valueItems`。**净值与资产页口径已切换**（`networth.ts` / `assets.ts`），常量 `DEFAULT_VALUATION_REGION_ID` 归属引擎 |
 | P4-2 蓝图成本引擎 | ✅ 完成 | `engines/blueprint.ts`：材料 `max(runs, ceil(round2(基础量 × runs × (1 − ME/100))))`（**取整在任务层**、**每 run 至少 1 单位**）、时长 `ceil(基础时长 × runs × (1 − TE/100))`；单价一律走估值引擎（口径/基准/站点/过滤透传）、缺价计 0 并列入 `missingTypeIds`、可选 `includeBlueprintPrice`；支持 6 类活动（`manufacturing` 默认）、多件产出、无产出行与非蓝图容错 |
-| P4-3 LP 比价引擎 | 未开始 | 需新迁移 `sde_lp_offers` + 社区 GitHub JSON 拉取 |
+| P4-3 LP 比价引擎 | ✅ 完成 | `lp/sync.ts` + `lp/repo.ts`（数据源 **ESI 公共端点** `/loyalty/stores/{corp}/offers/`，无需授权）+ `engines/lp.ts`：`netIsk = 产出估值 − 材料成本 − ISK 支出`、`ISK/LP = netIsk ÷ lpCost`；默认跳过 `ak_cost > 0`；`rankLpOffers` / `buildLpPortfolio`（× 真实 LP 余额 → 「每军团换什么、共值多少 ISK」）。新迁移 **0005**（复合主键，见踩坑 #26） |
 | P4-4 矿石精炼值引擎 | 未开始 | 需补 SDE 矿石→矿物映射（现导入未含 `typeMaterials`） |
 | P4-5 计算器页 + 端到端 | 未开始 | Fuzzworks 对标 + 官网算例对照归档 |
 
@@ -194,31 +194,63 @@
 - 多产出取「产出量最大的一行」为主产物（当前 SDE 制造活动只有 1 行，此处仅为稳健）
 - `includeBlueprintPrice` **默认关**；开启时计入**蓝图本体（BPO）**价格——BPC 无市场报价，故该开关只对 BPO 有意义
 
+**P4-3 实测记录（2026-09-28，真实库副本 + 真实 ESI + 单测）**：
+- 静态：core **264 → 283 用例全绿**（新增 sync 8 + 引擎 11；32 个文件）；`tsc --noEmit`（core / ui）与 `ui build` 通过；未动 Rust
+- **迁移 v4 → v5**（用 `VACUUM INTO` 生成真实库**一致副本**后迁移，**不触碰运行库**）：`applied=1`、`schemaVersion=5`；`market_orders` **890,852** / `sde_types` **53,060** / `assets` **1,495** / `lp_balances` **6** **行数全部不变**
+- **真实抓取**（6 个有 LP 余额的军团，走 ESI 公共端点）：offer 数 **310 / 310 / 319 / 234 / 102 / 310**；**库内条数 = ESI 直读条数**（逐条 `offer_id` 集合相等断言通过，逐军团核对）
+- **LP 组合（真实数据 + 真实 LP 余额）**：
+  | 军团 | 可用 LP | 最优 offer | ISK/LP | 全部 LP 净收益 |
+  |---|---|---|---|---|
+  | 1000125 | 192,938 | 15343 | 6,500.00 | **1,254,097,000** |
+  | 1000120 | 5,189 | 3655 | 3,891.11 | 20,190,981 |
+  | 1000130 | 1,439 | 4426 | 3,066.67 | 4,412,933 |
+  | 1000035 | 627 | 4180 | 3,398.80 | 2,131,048 |
+  | 1000041 | 61 | 4180 | 3,398.80 | 207,327 |
+  | 1000167 | 36 | 4180 | 3,398.80 | 122,357 |
+  | **合计** | | | | **1,281,161,645 ISK** |
+- 手算校验（零误差样例）：offer **4180**（type 27086 ×1、LP 375、ISK 375,000、无材料）= (1,649,550 − 375,000) ÷ 375 = **3,398.8** ✓
+- **真实数据暴露的设计缺陷（已修）**：`offer_id` **在不同军团间重复**（1000035/1000041/1000167 返回同一批 offer_id）→ 原「offer_id 单列主键」触发 `UNIQUE constraint failed`；改为主键 `(corporation_id, offer_id)`（迁移未提交前修正，见踩坑 #26），并加回归用例
+- **A4 Fuzzwork 对照：无法程序化取数**（其 LP 页是 JS 表单 + 免责确认，`/lpstore/api/lpstore.php` 返回 File not found；无公开 LP API）→ 按确认的方案改为**人工核对清单**（上表 offer 与 ISK/LP 可逐条核对）。其页面同时明示 **"Prices are as per a simulated 5% buy from the Jita market"**，即默认价格口径为 **Jita 5% 分位**，与本项目默认口径一致
+- ⚠️ **已知口径差异（待你决定，未实现）**：Fuzzwork 对**蓝图类产出**按「生产技能 PE5 的材料成本」估算其价值；本项目对**无市场报价的产出**（含 BPC）返回 `iskPerLp = null`（不虚构估值）→ 这类 offer 目前不参与排名。若要覆盖，需引入「蓝图成本估值 + ME/PE 假设」，属引擎扩展，**建议单独立项确认**
+
+**P4-3 口径（已定）**：
+- **数据源 = ESI 公共端点** `GET /loyalty/stores/{corporation_id}/offers/`（无需授权）——方案 §4.2 的「社区 GitHub JSON」**作废**（该端点已公开，官方数据优于第三方）
+- **抓取范围**：默认只抓**角色有 LP 余额的军团**（`lp_balances`）；支持指定军团 id
+- **公式**：`netIsk = 产出估值 − 材料成本 − ISK 支出`；`ISK/LP = netIsk ÷ lpCost`；`lpCost = 0` 或产出无报价时 **null**（不除零、不假装有值）
+- **`ak_cost > 0`（CONCORD LP）默认跳过**并在结果中计数（`skippedAkOffers`），可显式纳入
+- **表命名**：`lp_offers` / `lp_offer_items` / `lp_store_state`（**不带 `sde_` 前缀**——来源是 ESI 而非 SDE，方案 §5 的 `sde_lp_offers` 是历史假设）
+- **写入语义**：每军团**整体替换**（单事务先删后插）；失败隔离——单军团失败只写该行 `last_error`，`last_ok_at` 与既有报价不动
+- **新鲜度**：`max(服务端 Cache-Control/Expires 声明, 本地 24h TTL)`——既严格不早于服务端缓存回源（方案 §9 CCP 合规），又减少低频数据请求；到期后靠 ETag 条件请求（304 即零流量）；`force` 可越过
+- **调度优先级**：`ondemand`（按需刷新）
+
 ## 数据库现状
 
-- schema 版本：**v4**（v1 settings + v2 SDE 11 表 + v3 行情 7 表 + v4 个人数据 10 表）
-- 迁移文件：`0001-settings` `0002-sde-tables` `0003-market-tables` `0004-personal-tables`（**已发布，禁止修改，只能新增**）
+- schema 版本：**v5**（v1 settings + v2 SDE 11 表 + v3 行情 7 表 + v4 个人数据 10 表 + v5 LP 商店 3 表）
+- 迁移文件：`0001-settings` `0002-sde-tables` `0003-market-tables` `0004-personal-tables` `0005-lp-tables`（**已发布，禁止修改，只能新增**）
+- v5 LP 表：`lp_offers`（主键 `(corporation_id, offer_id)`）`lp_offer_items` `lp_store_state`；真实库副本 v4→v5 迁移实测通过（行数不变）
+- **运行库当前仍为 v4**（P4-3 只在**副本**上跑了迁移；下次启动应用会自动升到 **v5** 并建 3 张 LP 表——属正常路径，已由迁移执行器幂等保证）
 - v4 个人数据表：`characters` `assets` `wallet_journal` `my_orders` `contracts` `industry_jobs` `mining_ledger` `lp_balances` `networth_snapshots` `personal_sync_state`（字段按官方 **OpenAPI 3.1** 逐端点核对）
 - 真实运行库升级实测：v3 → v4 应用 1 个迁移，`market_orders` 890,552 行与 `sde_types` 53,060 行**行数不变**，10 张新表就位，库内 `idx_` 索引 28 个
 - 运行库位置：`%APPDATA%\com.eve-suite.desktop\eve-suite.db`（WAL）
 - SDE 缓存：`%APPDATA%\com.eve-suite.desktop\sde-cache\`（11 个 JSONL，约 160MB）
 - 实测入库（SDE build 3542233）：types 53,060 / stations 5,210 / blueprints 5,082 / 配方材料 42,830
 - 实测采集（真实行情）：**5 枢纽 890,701 条订单**（伏尔戈 403,514 / 多美 182,019 / 美特伯里斯 119,361 / 西玛特尔 71,330 / 金纳泽 114,477），聚合出 56,347+ 条 market_stats；Tritanium 实测 吉他 卖 3.69 / 买 3.70 / 5% 分位 3.762
-- 测试：core **264 用例全绿**（30 个文件；P4-1 新增 24、P4-2 新增 21）；Rust **12 用例全绿**（另有 1 个 `#[ignore]` 真钥匙串往返自检，用 `cargo test -- --ignored --nocapture` 手动跑）
+- 测试：core **283 用例全绿**（32 个文件；P4-1 新增 24、P4-2 新增 21、P4-3 新增 19）；Rust **12 用例全绿**（另有 1 个 `#[ignore]` 真钥匙串往返自检，用 `cargo test -- --ignored --nocapture` 手动跑）
 - UI：`pnpm --filter @eve-suite/ui build` 通过（tsc + vite）；P3-8 **界面五步验收全部通过**（①立即同步 ②切页签不中断 ③暂停/恢复 ④生成今日快照 ⑤登出清除 + 二次授权 + 重新同步）；P4-1 更新资产页口径文案并**做了真机界面复核**（净值卡 / 资产表前 4 行 / 展开明细与库内直算逐项一致，见 P4-1 实测记录）
-- P4-1 / P4-2 **均未新增迁移**（schema 仍 v4）：估值引擎只读 `market_stats` / `market_orders`，蓝图引擎只读 P1 已入库的 `sde_blueprints*`
+- P4-1 / P4-2 **未新增迁移**（当时 schema 仍 v4）；**P4-3 新增迁移 0005**（LP 商店 3 表，schema → v5）：估值/蓝图引擎只读既有 `market_stats` / `market_orders` / `sde_blueprints*`，LP 引擎只读 `lp_*` 与 `lp_balances`
 - P3-8 收尾后的库态（登出清空 → 二次授权 → 重新同步恢复）：`characters` 1 / `assets` 1495 / `wallet_journal` 2 / `lp_balances` 6 / `networth_snapshots` 1 / 水位 8 条 / `personal:` ETag 8 条
-- 机密存储：OAuth 刷新令牌存**系统钥匙串**（服务名 `com.eve-suite.desktop`），**数据库零令牌字段**（v4 亦不含任何令牌列）
+- 机密存储：OAuth 刷新令牌存**系统钥匙串**（服务名 `com.eve-suite.desktop`），**数据库零令牌字段**（v5 亦不含任何令牌列；LP 商店为公共数据，无需授权）
 
 ## 下一步
 
-1. **P4-3 LP 比价引擎**（下一子任务）：每军团 offer 的 ISK/LP 排名 × 实际 LP 余额（方案 §6.2）。需要：新迁移 `sde_lp_offers`（方案 §5 列过但 P1 未建）+ 社区 LP 报价 GitHub JSON 拉取 + 复用估值引擎定价。**开工前先出「任务清单 + 验收清单」交用户确认。** 之后 P4-4（矿石精炼值，需补 SDE 矿石→矿物映射）、P4-5（计算器页 + 端到端对照）。
-2. **待推送**：本地有数个提交未推送（起点 `9130776` → `33052dc`）；推送时机由用户掌控（推送后 CI 才会跑）
+1. **P4-4 矿石精炼值引擎**（下一子任务）：矿石精炼产值 = Σ(矿物量 × 引擎价) − 损耗/税（方案 §6.1 计算器 / §6.2 采矿时薪）。需要：**补 SDE 矿石→矿物映射**（现 SDE 导入只含 11 个 JSONL，未含 `typeMaterials`；需扩导入或另辟数据源）+ 精炼产出率（`sde_types.portion_size` 已入库，矿石通常 100）+ 站/建筑税率参数。**开工前先出「任务清单 + 验收清单」交用户确认。** 之后 P4-5（计算器页 + 与 Fuzzworks 算例端到端对照归档）。
+2. **待推送**：本地有数个提交未推送（起点 `9130776` → `6d3c6b1`）；推送时机由用户掌控（推送后 CI 才会跑）
 3. 已知待办（非阻塞；凡涉及改动已有代码，均需先出方案并确认）：
    - **P2 行情采集未用共享调度器**（方案 §4.4 要求全局令牌桶单例）：`packages/ui/src/market/useMarketCollector.ts` 自建 `RequestScheduler`，与 P3 新增的 `ui/src/core/runtime.ts` 未统一
    - **core 数据库层对瞬时锁的容错**：连接池 + 外部进程并发时曾观测到该轮同步因 `SQLITE_BUSY`（`database is locked`）整轮失败；根治需评估 `BEGIN IMMEDIATE` / BUSY 重试，属独立议题（P3-9 只把核验脚本改为只读打开，未动 core）
    - 登出是否调 SSO revoke 端点（当前只删本地令牌与数据）
    - **估值分位口径是否对齐第三方**：当前 `p5_sell` = 按订单数线性插值；ISK.GG/Fuzzwork 用**成交量加权**（A7 实测差异 +0.004%~+0.014%，数据本身一致）。若要新增「成交量加权」口径，属引擎 + P2 采集侧扩展，**需先出方案**
+   - **LP offer 的 BPC 类产出估值**：Fuzzwork 对「产出为蓝图」的 offer 按 **PE5 材料成本**估算价值；本项目对无市场报价产出返回 `iskPerLp = null`（不虚构）→ 这类 offer 暂不参与排名。若要覆盖，需引入「蓝图成本估值 + ME/PE 假设」，属引擎扩展，**需先出方案**
 
 ## 踩坑备忘（重要，勿重蹈）
 
@@ -281,6 +313,10 @@
 25. **【易错，P4-2 实测】SQL 保留字不能直接作列别名**：`SELECT max_production_limit AS limit ...` 直接报 `near "limit": syntax error`（`limit` 是关键字），改用 `AS maxLimit` 即通。
    - 通用教训：列别名避开 SQL 关键字（`limit` / `order` / `group` / `index` / `key` / `range` 等）；本项目 core 内统一用驼峰业务名（如 `maxLimit` / `baseQuantity`），不要照搬列名英文单词。
    - 备注：`market_orders` 表本身有 `range` 列（建表时未加引号也能建），但**查询里做别名/表达式时更易踩到**，新增 SQL 时注意。
+26. **【致命，P4-3 真实数据实测】`offer_id` 在不同 NPC 军团之间会重复**：LP 商店的 offer_id 是**军团内**编号，多个军团（实测 1000035 / 1000041 / 1000167）返回同一批 offer_id → 用 `offer_id` 单列主键会立刻 `UNIQUE constraint failed: lp_offers.offer_id`（单测全绿也测不出，因为 fixture 只用了单军团数据）。
+   - 对策：`lp_offers` 主键 = **`(corporation_id, offer_id)`**，`lp_offer_items` 主键 = `(corporation_id, offer_id, type_id)`；整体替换按 `corporation_id` 直接删除即可（无需子查询）。已加回归用例「同一 offer_id 在不同军团可共存」。
+   - 通用教训：**第三方/官方数据的「ID」先确认作用域**（全局唯一 / 军团内唯一 / 区域内唯一）；跨作用域复用 ID 的字段一律进复合主键。同类风险点：`market_orders.order_id`（实测全局唯一，暂无需改）。
+   - 另一条工程经验：**真实数据核验能抓住单测抓不到的作用域缺陷**——本次若只跑单测（fixture 单军团）会全绿放行。
 
 ## 关键文件地图
 
@@ -307,6 +343,9 @@
 | 行情采集 / 统计 / 按需 / 监视 | `packages/core/src/market/` |
 | **估值引擎（P4-1 唯一定价出口）** | `packages/core/src/engines/valuation.ts`（出口 `engines/index.ts`） |
 | **蓝图成本引擎（P4-2）** | `packages/core/src/engines/blueprint.ts`（BOM / ME-TE 折扣 / 成本编排） |
+| **LP 比价引擎（P4-3）** | `packages/core/src/engines/lp.ts`（ISK/LP 排名 / LP 组合） |
+| **LP 商店同步与仓储（P4-3）** | `packages/core/src/lp/sync.ts`、`lp/repo.ts`（ESI 公共端点 + ETag/TTL + 整团替换） |
+| 迁移 0005（LP 三表） | `packages/core/src/db/migrations/0005-lp-tables.ts` |
 | 个人数据同步（P3-5） | `packages/core/src/personal/`（scopes / rows / state / sync）+ `esi/paging.ts` |
 | 个人数据调度（P3-6） | `packages/core/src/personal/scheduler.ts`、`personal/repo.ts`；缓存解析在 `esi/client.ts` 的 `parseCacheControl` |
 | UI：资产页 / 授权 / 同步 Hook | `packages/ui/src/personal/`（AssetsPage.tsx、useCharacters.ts、usePersonalSync.ts） |
@@ -336,6 +375,8 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 **第三方对照接口（验收用，无需 key）**：
 - **蓝图基础量**：`https://www.fuzzwork.co.uk/blueprint/api/blueprint.php?typeid=<id>` → `activityMaterials`（按活动 ID：1=制造 / 3=TE 研究 / 4=ME 研究 / 5=复制 / 8=发明）、`blueprintDetails`（产物 / `times` / `maxProductionLimit`）。**只返回基础量**（实测忽略 `runs` / `me` / `te` 参数）
 - **聚合行情**：`https://market.fuzzwork.co.uk/aggregates/?region=<regionId>&types=<逗号分隔 id>` → `sell.min/median/percentile/volume/orderCount`（`percentile` = **成交量加权** 5% 分位，见 A7 对照）
+- **LP 商店（P4-3）**：Fuzzwork 的 LP 页（`https://www.fuzzwork.co.uk/lpstore/`）**无公开 API**（JS 表单 + 免责确认；`/lpstore/api/lpstore.php` 404）→ 对照需人工核对。其页面口径说明：默认 **"Prices are as per a simulated 5% buy from the Jita market"**（= Jita 5% 分位，与本项目默认一致）；**蓝图类产出按 PE5 材料成本估值**（本项目未实现，见「下一步 · 已知待办」）
+- **LP 商店权威数据源**：ESI 公共端点 `https://esi.evetech.net/latest/loyalty/stores/{corporation_id}/offers/`（无需授权）
 
 ## 会话纪要（2026-09-28）
 
@@ -350,8 +391,9 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 | 3 | P3-9 同步 / 启动时机修复（应用级持有一轮启动 + 角色变化补跑 + 核验脚本只读 + 提示语文案） | 通过 | `fcdd9d3`（5 文件，+84 / −29） |
 | 4 | **P4-1 估值引擎**（唯一定价出口 + 净值/资产页口径切换） | 通过（真实库抽查零误差 + 界面逐项一致 + 第三方口径对照） | `6b31a9c`（11 文件，+871 / −83） |
 | 5 | **P4-2 蓝图成本引擎**（BOM × 引擎价 + ME/TE 折扣 + 可选蓝图价） | 通过（真实库 + Fuzzwork 基础量零误差） | `33052dc`（4 文件，+658 / −1） |
+| 6 | **P4-3 LP 比价引擎**（ESI 公共 LP 商店 + ISK/LP 排名 + LP 组合） | 通过（真实库副本迁移 + 真实 ESI 抓取逐条一致） | `6d3c6b1`（13 文件，+1,284） |
 
-**关键验收证据**（完整记录见「P3-8 核验记录」「P3-9 实测记录」，以及「## P4 进度」下的 P4-1 / P4-2 实测记录）
+**关键验收证据**（完整记录见「P3-8 核验记录」「P3-9 实测记录」，以及「## P4 进度」下的 P4-1 / P4-2 / P4-3 实测记录）
 
 - 步骤 ④：界面净值卡与快照行严格相等 `138,161,761,314.6 = 136,735,404,335.68 + 1,426,356,978.92`
 - 步骤 ⑤：登出后 `characters` / 8 张个人表 / 8 条水位 / `personal:` ETag 8 条 / 快照**全清零**、钥匙串条目消失；**P2/P1 零误伤**（`market_orders` 891,667 / `sde_types` 53,060 / `watchlist_items` 1）
@@ -365,7 +407,7 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 
 **该会话结束时的仓库 / 环境状态**
 
-- 最新提交：P4-2 `33052dc`（本次纪要为紧随其后的 docs 提交）；**工作区干净**；`main` 领先 `origin/main`（`28c3475` → `33052dc`，含 P4-1 / P4-2 及配套 docs 提交），**未推送**
-- 核验用临时只读用例（P4-1：`test/engines/zz-realdb-verify.test.ts`；P4-2：`test/engines/zz-realdb-p42.test.ts`）**跑完均已删除**，未入库；P4-1 界面复核曾启动 `pnpm tauri dev`（`eve-suite.exe` pid 34660），至会话结束时仍在运行（未停）
+- 最新提交：P4-3 `6d3c6b1`（本次纪要为紧随其后的 docs 提交）；**工作区干净**；`main` 领先 `origin/main`（`28c3475` → `6d3c6b1`，含 P4-1 / P4-2 / P4-3 及配套 docs 提交），**未推送**
+- 核验用临时用例（`zz-realdb-verify.test.ts` / `zz-realdb-p42.test.ts` / `zz-realdb-p43.test.ts`）**跑完均已删除**，未入库；P4-1 界面复核启动的 `pnpm tauri dev` **已按用户要求停止**（`eve-suite.exe` 进程已结束），P4-3 核验改用「真实库副本 + 真实 ESI」，**全程未动运行库**
 - 遗留非阻塞待办与下一步见「## 下一步」第 2、3 条
 
