@@ -1,12 +1,20 @@
 import { readHeader, readNumberHeader, type HttpClient, type HttpResponse } from './http';
 import {
   EsiError,
+  type CharacterAsset,
+  type CharacterContract,
+  type CharacterOrder,
+  type CharacterPublicInfo,
   type EsiErrorLimit,
   type EsiRateLimit,
   type EsiResult,
   type EsiStatus,
+  type IndustryJob,
+  type LoyaltyPoints,
   type MarketHistoryEntry,
   type MarketOrder,
+  type MiningObservation,
+  type WalletJournalEntry,
 } from './types';
 
 /** ESI 公共端点（tranquility） */
@@ -103,7 +111,7 @@ export class EsiClient {
 
   /**
    * 认证 GET（个人数据端点）：`path` 为 ESI 路径，如 `/characters/123/wallet/`。
-   * 资产 / 钱包 / 合同等具体快捷方法在 P3-5 之上补。
+   * 下列具体快捷方法即其封装。
    */
   fetchAuthenticated<T>(
     path: string,
@@ -112,6 +120,118 @@ export class EsiClient {
   ): Promise<EsiResult<T>> {
     const normalized = path.startsWith('/') ? path : `/${path}`;
     return this.request<T>(`${this.baseUrl}${normalized}`, { ...options, characterId });
+  }
+
+  // ── 个人数据端点（P3-5；均需授权 scope，经调度器以 personal 优先级下发） ──
+
+  /** 资产列表（分页） */
+  fetchCharacterAssets(
+    characterId: number,
+    page: number,
+    options?: Omit<EsiRequestOptions, 'characterId'>,
+  ): Promise<EsiResult<CharacterAsset[]>> {
+    return this.fetchAuthenticated<CharacterAsset[]>(
+      `/characters/${characterId}/assets/?page=${page}`,
+      characterId,
+      options,
+    );
+  }
+
+  /** 钱包余额（单值数字，非分页） */
+  fetchWalletBalance(
+    characterId: number,
+    options?: Omit<EsiRequestOptions, 'characterId'>,
+  ): Promise<EsiResult<number>> {
+    return this.fetchAuthenticated<number>(`/characters/${characterId}/wallet/`, characterId, options);
+  }
+
+  /** 钱包账本（分页；ESI 自带约 6 周） */
+  fetchWalletJournal(
+    characterId: number,
+    page: number,
+    options?: Omit<EsiRequestOptions, 'characterId'>,
+  ): Promise<EsiResult<WalletJournalEntry[]>> {
+    return this.fetchAuthenticated<WalletJournalEntry[]>(
+      `/characters/${characterId}/wallet/journal/?page=${page}`,
+      characterId,
+      options,
+    );
+  }
+
+  /** 当前挂单（分页；不含历史） */
+  fetchCharacterOrders(
+    characterId: number,
+    page: number,
+    options?: Omit<EsiRequestOptions, 'characterId'>,
+  ): Promise<EsiResult<CharacterOrder[]>> {
+    return this.fetchAuthenticated<CharacterOrder[]>(
+      `/characters/${characterId}/orders/?page=${page}`,
+      characterId,
+      options,
+    );
+  }
+
+  /** 合同（分页） */
+  fetchCharacterContracts(
+    characterId: number,
+    page: number,
+    options?: Omit<EsiRequestOptions, 'characterId'>,
+  ): Promise<EsiResult<CharacterContract[]>> {
+    return this.fetchAuthenticated<CharacterContract[]>(
+      `/characters/${characterId}/contracts/?page=${page}`,
+      characterId,
+      options,
+    );
+  }
+
+  /** 制造/科研任务（分页） */
+  fetchIndustryJobs(
+    characterId: number,
+    page: number,
+    options?: Omit<EsiRequestOptions, 'characterId'>,
+  ): Promise<EsiResult<IndustryJob[]>> {
+    return this.fetchAuthenticated<IndustryJob[]>(
+      `/characters/${characterId}/industry/jobs/?page=${page}`,
+      characterId,
+      options,
+    );
+  }
+
+  /** 采矿观察（分页） */
+  fetchMiningLedger(
+    characterId: number,
+    page: number,
+    options?: Omit<EsiRequestOptions, 'characterId'>,
+  ): Promise<EsiResult<MiningObservation[]>> {
+    return this.fetchAuthenticated<MiningObservation[]>(
+      `/characters/${characterId}/mining/?page=${page}`,
+      characterId,
+      options,
+    );
+  }
+
+  /** 忠诚点余额（分页，通常 1 页） */
+  fetchLoyaltyPoints(
+    characterId: number,
+    page: number,
+    options?: Omit<EsiRequestOptions, 'characterId'>,
+  ): Promise<EsiResult<LoyaltyPoints[]>> {
+    return this.fetchAuthenticated<LoyaltyPoints[]>(
+      `/characters/${characterId}/loyalty/points/?page=${page}`,
+      characterId,
+      options,
+    );
+  }
+
+  /** 角色公开信息（无需授权；仅取 corporation_id） */
+  fetchCharacterPublicInfo(
+    characterId: number,
+    options?: EsiRequestOptions,
+  ): Promise<EsiResult<CharacterPublicInfo>> {
+    return this.request<CharacterPublicInfo>(
+      `${this.baseUrl}/characters/${characterId}/`,
+      options,
+    );
   }
 
   private async request<T>(url: string, options?: EsiRequestOptions): Promise<EsiResult<T>> {

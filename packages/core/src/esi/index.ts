@@ -1,11 +1,19 @@
 export type {
+  CharacterAsset,
+  CharacterContract,
+  CharacterOrder,
+  CharacterPublicInfo,
   EsiErrorKind,
   EsiErrorLimit,
   EsiRateLimit,
   EsiResult,
   EsiStatus,
+  IndustryJob,
+  LoyaltyPoints,
   MarketHistoryEntry,
   MarketOrder,
+  MiningObservation,
+  WalletJournalEntry,
 } from './types';
 export { EsiError } from './types';
 
@@ -71,3 +79,6 @@ export { systemClock } from './clock';
 
 export { RequestScheduler } from './scheduler';
 export type { QueueStats, RequestPriority, SchedulerOptions } from './scheduler';
+
+export { fetchAllPages } from './paging';
+export type { FetchAllPagesOptions, FetchAllPagesResult, PageFetcher } from './paging';

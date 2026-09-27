@@ -10,7 +10,7 @@
 | **P0 骨架** | ✅ 全部完成 | 含 Release 链路验证 |
 | **P1 SDE 数据基座** | ✅ 全部完成（含 UI 人工复验） | 官方 SDE 下载/转换/入库 + 中英文搜索 |
 | **P2 行情模块** | ✅ 全部完成（含 UI 人工复验） | 5 枢纽 5 分钟采集 + 按需行情 + 监视列表 |
-| P3 OAuth 个人数据 | 🚧 进行中（P3-1 ~ P3-4 已完成） | 本地回环授权 + 七类数据同步 + 资产/净值视图 |
+| P3 OAuth 个人数据 | 🚧 进行中（P3-1 ~ P3-5 已完成） | 本地回环授权 + 七类数据同步 + 资产/净值视图 |
 | P4 四大引擎 | 未开始 | 蓝图 BOM 数据已随 P1 入库 |
 | P5 整合功能 + 全域层 | 未开始 | |
 | P6 分发打磨 | 未开始 | 仓库需由私有转公开；macOS 签名 / 公证 |
@@ -58,7 +58,7 @@
 | P3-2 令牌安全存储 | ✅ 完成 | Rust `keyring` **只存 refresh token**（账号 `refresh-token:<characterId>`），access token 仅内存；**数据库零令牌字段**；CI 三平台构建已验证（run `36322411890`） |
 | P3-3 认证请求 + 自动刷新 | ✅ 完成 | `EsiClient` 注入 Bearer（`auth` + `characterId`）；401 → 强制刷新后**只重试一次**；`TokenManager` 临期（默认 60s）自动刷新，**单飞**并发 + **轮换回写**钥匙串 |
 | P3-4 迁移 0004 个人表 | ✅ 完成 | 10 张表（9 张个人/净值 + 1 张同步状态）+ 9 个索引；字段按官方 OpenAPI 3.1 核对；真实库 v3→v4 实测通过 |
-| P3-5 七类数据同步 | 未开始 | |
+| P3-5 七类数据同步 | ✅ 完成 | `PersonalSyncer`（8 端点水位：assets / wallet_balance / wallet_journal / orders / contracts / industry / mining / loyalty）；覆盖型整体替换、追加型按主键 upsert（journal 按 entry_id、mining 按复合键）；分页共享 `esi/paging.ts`（不改 P2 collector）；`insertRows` 加可选 `onConflict`（默认行为不变）；余额与军团 ID 写 `characters`；失败隔离（单 scope 只写该行 last_error，last_ok_at 不变）；认证错误原样记录不包装；8 端点真实未认证请求实测全部 401（路径校验通过，含尾斜杠兼容行为） |
 | P3-6 同步调度 | 未开始 | 15–30 分钟 + 启动即同步；遵守 Cache-Control |
 | P3-7 UI 资产页 | 未开始 | |
 | P3-8 真数据端到端验证 | 未开始 | 需用户本人在场完成一次浏览器授权 |
@@ -82,12 +82,12 @@
 - SDE 缓存：`%APPDATA%\com.eve-suite.desktop\sde-cache\`（11 个 JSONL，约 160MB）
 - 实测入库（SDE build 3542233）：types 53,060 / stations 5,210 / blueprints 5,082 / 配方材料 42,830
 - 实测采集（真实行情）：**5 枢纽 890,701 条订单**（伏尔戈 403,514 / 多美 182,019 / 美特伯里斯 119,361 / 西玛特尔 71,330 / 金纳泽 114,477），聚合出 56,347+ 条 market_stats；Tritanium 实测 吉他 卖 3.69 / 买 3.70 / 5% 分位 3.762
-- 测试：core **161 用例全绿**（19 个文件）；Rust **11 用例全绿**（另有 1 个 `#[ignore]` 真钥匙串往返自检，用 `cargo test -- --ignored --nocapture` 手动跑）
+- 测试：core **178 用例全绿**（22 个文件）；Rust **11 用例全绿**（另有 1 个 `#[ignore]` 真钥匙串往返自检，用 `cargo test -- --ignored --nocapture` 手动跑）
 - 机密存储：OAuth 刷新令牌存**系统钥匙串**（服务名 `com.eve-suite.desktop`），**数据库零令牌字段**（v4 亦不含任何令牌列）
 
 ## 下一步
 
-1. **P3-5**：七类个人数据同步（assets / wallet 余额+账本 / orders / contracts / industry_jobs / mining / loyalty）——仓储层随用随建，覆盖型端点整体替换、追加型按主键去重
+1. **P3-6**：同步调度——启动即同步 + 15–30 分钟周期；遵守 Cache-Control（需先在 `EsiClient` 解析 `Cache-Control` 响应头并写入 `personal_sync_state.expires_at`，P3-5 已留列未填）；`PersonalSyncer` 已支持失败隔离与 `TokenManagerError` 原样上抛，调度层遇 `reauth_required` 应停摆并提示重新授权（勿重试）
 2. 待复核项：
    - Windows 单条凭据 blob 存在上限，refresh token 实际长度待 **P3-8** 实测（超限则分片存储）
    - **ESI 认证端点的 CORS 预检是否放行 `Authorization` 头**（P3-3 引入，P3-8 实测；若不放行则认证请求需改走 Rust 代理）
@@ -123,6 +123,8 @@
    - **路径不再带尾斜杠**：官方规格写 `/characters/{character_id}/assets`（旧文档的 `/assets/` 已不是规范写法）；P2 用尾斜杠能通是 ESI 的兼容行为，新代码统一按规格写。
    - 响应 schema 是 **数组包装**：字段在 `components.schemas.<名字>.items.properties`，不在顶层。
    - `/characters/{character_id}/wallet` 返回**单个数字**（ISK 余额），不是对象。
+18. **`market_etag_cache` 是通用逐页 ETag KV（P3-5 起跨模块复用）**：`scope` 为自由文本键——P2 行情用 `orders:...` / `history:...`，P3 个人数据用 `personal:<characterId>:<scope>:<页>`。表名虽带 market，但**不要**为个人数据另建 ETag 表；而 `personal_sync_state.etag` 只存单请求端点（wallet_balance）的 ETag，分页端点该列为空、水位页数在 `pages`。
+   - 个人数据端点的运行时路径沿用 client 既有的**尾斜杠风格**（与 P2 一致），8 端点已实测（未认证 401）可通——踩坑 #17 的「无尾斜杠」是对官方规格文档而言，运行时两种写法 ESI 都接受。
 
 ## 关键文件地图
 
@@ -147,6 +149,7 @@
 | OAuth 回环服务（Rust） | `src-tauri/src/oauth.rs` |
 | 系统钥匙串（Rust） | `src-tauri/src/secrets.rs` |
 | 行情采集 / 统计 / 按需 / 监视 | `packages/core/src/market/` |
+| 个人数据同步（P3-5） | `packages/core/src/personal/`（scopes / rows / state / sync）+ `esi/paging.ts` |
 | Tauri 壳（命令注册） | `src-tauri/src/lib.rs` |
 | CI workflow | `.github/workflows/build.yml` |
 | 方案（唯一事实来源） | `EVE 工具套件 · 单机桌面版完整开发方案.md` |

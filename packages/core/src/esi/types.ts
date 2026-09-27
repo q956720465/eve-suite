@@ -61,6 +61,131 @@ export interface EsiResult<T> {
   errorLimit: EsiErrorLimit | null;
 }
 
+/** 资产项（/characters/{character_id}/assets/） */
+export interface CharacterAsset {
+  item_id: number;
+  type_id: number;
+  quantity: number;
+  location_id: number;
+  location_flag: string;
+  location_type: 'station' | 'item' | 'other';
+  is_singleton: boolean;
+  /** 可选：仅蓝图拷贝为 true 时返回 */
+  is_blueprint_copy?: boolean;
+}
+
+/** 钱包账本条目（/characters/{character_id}/wallet/journal/），ESI 自带约 6 周 */
+export interface WalletJournalEntry {
+  /** ESI 的 `id` 字段，映射为 entry_id */
+  id: number;
+  date: string;
+  ref_type: string;
+  description: string;
+  amount?: number;
+  balance?: number;
+  reason?: string;
+  first_party_id?: number;
+  second_party_id?: number;
+  context_id?: number;
+  context_id_type?: string;
+  tax?: number;
+  tax_receiver_id?: number;
+}
+
+/** 我的挂单（/characters/{character_id}/orders/，仅当前挂单，不含历史） */
+export interface CharacterOrder {
+  order_id: number;
+  type_id: number;
+  region_id: number;
+  location_id: number;
+  price: number;
+  volume_total: number;
+  volume_remain: number;
+  is_corporation: boolean;
+  duration: number;
+  issued: string;
+  range: string;
+  /** 可选：ESI 为 false 时会省略 */
+  is_buy_order?: boolean;
+  /** 可选：买单才有 */
+  escrow?: number;
+  min_volume?: number;
+}
+
+/** 合同（/characters/{character_id}/contracts/） */
+export interface CharacterContract {
+  contract_id: number;
+  /** item_exchange / auction / courier / loan */
+  type: string;
+  status: string;
+  /** public / personal / corporation / alliance */
+  availability: string;
+  for_corporation: boolean;
+  issuer_id: number;
+  issuer_corporation_id: number;
+  assignee_id: number;
+  acceptor_id: number;
+  date_issued: string;
+  date_expired: string;
+  title?: string;
+  price?: number;
+  reward?: number;
+  collateral?: number;
+  buyout?: number;
+  volume?: number;
+  days_to_complete?: number;
+  start_location_id?: number;
+  end_location_id?: number;
+  date_accepted?: string;
+  date_completed?: string;
+}
+
+/** 制造/科研任务（/characters/{character_id}/industry/jobs/） */
+export interface IndustryJob {
+  job_id: number;
+  activity_id: number;
+  blueprint_id: number;
+  blueprint_type_id: number;
+  blueprint_location_id: number;
+  output_location_id: number;
+  facility_id: number;
+  station_id: number;
+  installer_id: number;
+  runs: number;
+  status: string;
+  duration: number;
+  start_date: string;
+  end_date: string;
+  product_type_id?: number;
+  licensed_runs?: number;
+  successful_runs?: number;
+  probability?: number;
+  cost?: number;
+  pause_date?: string;
+  completed_date?: string;
+  completed_character_id?: number;
+}
+
+/** 采矿观察（/characters/{character_id}/mining/，ESI 无唯一 id，按复合键定位） */
+export interface MiningObservation {
+  date: string;
+  solar_system_id: number;
+  type_id: number;
+  quantity: number;
+}
+
+/** 忠诚点余额（/characters/{character_id}/loyalty/points/） */
+export interface LoyaltyPoints {
+  corporation_id: number;
+  loyalty_points: number;
+}
+
+/** 角色公开信息（/characters/{character_id}/，无需授权） */
+export interface CharacterPublicInfo {
+  /** P3 仅用于填 characters.corporation_id（P5 公司资产要用） */
+  corporation_id: number;
+}
+
 /** ESI 请求失败原因分类 */
 export type EsiErrorKind =
   /** 网络/传输层失败（可重试） */

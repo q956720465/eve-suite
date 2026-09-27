@@ -46,6 +46,7 @@ export {
 export type { BlueprintRows, StationContext } from './parse';
 
 export { DEFAULT_BATCH_ROWS, insertRows } from './batch';
+export type { OnConflict } from './batch';
 
 export { importSde, readMeta } from './import';
 export type { ImportSdeOptions } from './import';
