@@ -35,9 +35,26 @@ export {
 } from './state';
 export type { PersonalScopeState, ScopeOkPatch } from './state';
 
-export { PersonalSyncer } from './sync';
+export { PersonalSyncer, computeExpiresAt } from './sync';
 export type {
   PersonalScopeSyncResult,
   PersonalSyncResult,
   PersonalSyncerOptions,
+  SyncCharacterOptions,
+  SyncScopeOptions,
 } from './sync';
+
+export {
+  DEFAULT_PERSONAL_SYNC_INTERVAL_MS,
+  PersonalSyncScheduler,
+} from './scheduler';
+export type {
+  PersonalSyncRoundSummary,
+  PersonalSyncSchedulerOptions,
+  TimerClearer,
+  TimerFactory,
+  TimerHandle,
+} from './scheduler';
+
+export { getCharacterScopeStates, listCharacterIds, listCharacters } from './repo';
+export type { CharacterSummary, ScopeStateSummary } from './repo';

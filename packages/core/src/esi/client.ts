@@ -5,6 +5,7 @@ import {
   type CharacterContract,
   type CharacterOrder,
   type CharacterPublicInfo,
+  type EsiCacheControl,
   type EsiErrorLimit,
   type EsiRateLimit,
   type EsiResult,
@@ -254,7 +255,8 @@ export class EsiClient {
     const pages = readNumberHeader(response.headers, 'x-pages');
     const rateLimit = parseRateLimit(response.headers);
     const errorLimit = parseErrorLimit(response.headers);
-    const responseMeta = { etag, pages, rateLimit, errorLimit };
+    const cacheControl = parseCacheControl(response.headers);
+    const responseMeta = { etag, pages, rateLimit, errorLimit, cacheControl };
 
     if (response.status === 304) {
       return { notModified: true, data: null, ...responseMeta };
@@ -349,4 +351,49 @@ function parseErrorLimit(headers: Readonly<Record<string, string>>): EsiErrorLim
   const reset = readNumberHeader(headers, 'x-esi-error-limit-reset');
   if (remain === null || reset === null) return null;
   return { remain, reset };
+}
+
+/**
+ * 解析缓存指令（`Cache-Control` + `Expires` 头）。
+ *
+ * 实测 ESI 多数端点只发 `public` + `Expires`（HTTP 日期），少数端点发 `max-age`，
+ * 故到期时间需两个来源；无任何一条时 maxAgeSeconds / expiresAtMs 为 null
+ * （调用方视作「不可缓存」，即每轮回源）。
+ */
+export function parseCacheControl(
+  headers: Readonly<Record<string, string>>,
+): EsiCacheControl | null {
+  const raw = readHeader(headers, 'cache-control');
+  const expiresRaw = readHeader(headers, 'expires');
+  if (raw === null && expiresRaw === null) return null;
+
+  const directives =
+    raw === null
+      ? []
+      : raw
+          .split(',')
+          .map((directive) => directive.trim().toLowerCase())
+          .filter((directive) => directive.length > 0);
+
+  let maxAgeSeconds: number | null = null;
+  for (const directive of directives) {
+    if (!directive.startsWith('max-age=')) continue;
+    const value = Number(directive.slice('max-age='.length).replace(/^"|"$/g, ''));
+    if (Number.isFinite(value) && value >= 0) maxAgeSeconds = value;
+    break;
+  }
+
+  let expiresAtMs: number | null = null;
+  if (expiresRaw !== null && expiresRaw.toLowerCase() !== '0') {
+    const parsed = Date.parse(expiresRaw);
+    if (Number.isFinite(parsed)) expiresAtMs = parsed;
+  }
+
+  return {
+    maxAgeSeconds,
+    expiresAtMs,
+    // no-cache 与 no-store 在本项目用途下等价：都表示「不得直接复用」，需回源
+    noStore: directives.includes('no-store') || directives.includes('no-cache'),
+    mustRevalidate: directives.includes('must-revalidate'),
+  };
 }

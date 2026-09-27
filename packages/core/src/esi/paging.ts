@@ -1,4 +1,4 @@
-import type { EsiResult } from './types';
+import type { EsiCacheControl, EsiResult } from './types';
 
 /**
  * 取单页：由调用方注入端点绑定与调度（页码从 1 起）。
@@ -25,6 +25,8 @@ export interface FetchAllPagesResult<T> {
   allNotModified: boolean;
   /** 本轮各页 ETag（含 304 回显），供回写缓存 */
   etags: Map<number, string>;
+  /** 首页响应的缓存指令（同一端点的各页一致），供调用方计算到期时间 */
+  cacheControl: EsiCacheControl | null;
 }
 
 /**
@@ -83,6 +85,7 @@ export async function fetchAllPages<T>(
       notModifiedPages,
       allNotModified: true,
       etags: etagUpdates,
+      cacheControl: first.cacheControl ?? null,
     };
   }
 
@@ -108,5 +111,6 @@ export async function fetchAllPages<T>(
     notModifiedPages,
     allNotModified: false,
     etags: etagUpdates,
+    cacheControl: first.cacheControl ?? null,
   };
 }

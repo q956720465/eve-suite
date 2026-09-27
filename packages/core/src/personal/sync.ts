@@ -3,11 +3,13 @@ import type { EsiClient } from '../esi/client';
 import { systemClock, type Clock } from '../esi/clock';
 import { fetchAllPages } from '../esi/paging';
 import type { RequestScheduler } from '../esi/scheduler';
+import { TokenManagerError } from '../esi/token-manager';
 import type {
   CharacterAsset,
   CharacterContract,
   CharacterOrder,
   CharacterPublicInfo,
+  EsiCacheControl,
   EsiResult,
   IndustryJob,
   LoyaltyPoints,
@@ -42,6 +44,7 @@ import {
   markScopeOk,
   markScopeStarted,
   savePageEtags,
+  type PersonalScopeState,
 } from './state';
 
 /** 分页端点的条目联合（仅用于端点分发时的类型收窄） */
@@ -61,6 +64,19 @@ export interface PersonalSyncerOptions {
   clock?: Clock;
 }
 
+/** 单端点结果中由具体同步实现产出的部分 */
+type ScopeSyncOutcome = Omit<
+  PersonalScopeSyncResult,
+  'scope' | 'ok' | 'error' | 'reauthRequired'
+>;
+
+export interface SyncScopeOptions {
+  /** 忽略 Cache-Control 到期时间强制拉取（手动「立即同步」用） */
+  force?: boolean;
+}
+
+export type SyncCharacterOptions = SyncScopeOptions;
+
 export interface PersonalScopeSyncResult {
   scope: PersonalScope;
   ok: boolean;
@@ -68,17 +84,55 @@ export interface PersonalScopeSyncResult {
   requests: number;
   /** 写入行数（合并 upsert 时含覆盖的既有行） */
   itemsWritten: number;
-  /** 全部请求命中 304，跳过写入 */
+  /** 未写入数据（命中 304 或仍在缓存有效期内） */
   skipped: boolean;
+  /** 跳过原因：not-modified = ETag 304；cache = 未到 Cache-Control 到期时间 */
+  skippedReason: 'not-modified' | 'cache' | null;
+  /** 刷新令牌失效需重新授权（`reauth_required`）；本轮该角色剩余端点已停摆 */
+  reauthRequired: boolean;
   error: string | null;
 }
 
 export interface PersonalSyncResult {
   characterId: number;
-  /** 8 个端点各自的结果（串行执行，单端点失败不影响其余） */
+  /** 各端点结果（串行执行，单端点失败不影响其余；遇 reauth_required 则提前终止） */
   scopes: PersonalScopeSyncResult[];
+  /** 因刷新令牌失效而中止本轮剩余端点 */
+  reauthRequired: boolean;
   /** 公开端点 /characters/{id}/ 的 corporation_id 更新（非关键，失败不阻断） */
   corporationInfo: { ok: boolean; error: string | null };
+}
+
+/**
+ * 依据响应缓存指令计算到期时间（ISO 8601）。
+ *
+ * 优先级（RFC 7234）：`no-store` → 不可缓存；`max-age` → 当前时刻 + maxAge；
+ * 否则回退到 `Expires` 的绝对时刻。已过期的时刻统一记 null，
+ * 视作「立即需要回源」（此时仍靠 ETag 304 省流量）。
+ */
+export function computeExpiresAt(
+  cacheControl: EsiCacheControl | null | undefined,
+  nowMs: number,
+): string | null {
+  if (cacheControl === null || cacheControl === undefined) return null;
+  if (cacheControl.noStore) return null;
+
+  let atMs: number | null = null;
+  if (cacheControl.maxAgeSeconds !== null) {
+    atMs = nowMs + cacheControl.maxAgeSeconds * 1000;
+  } else if (cacheControl.expiresAtMs !== null) {
+    atMs = cacheControl.expiresAtMs;
+  }
+
+  if (atMs === null || atMs <= nowMs) return null;
+  return new Date(atMs).toISOString();
+}
+
+/** 是否仍在服务端声明的缓存有效期内 */
+function isFresh(expiresAt: string | null | undefined, nowMs: number): boolean {
+  if (expiresAt === null || expiresAt === undefined) return false;
+  const at = Date.parse(expiresAt);
+  return Number.isFinite(at) && at > nowMs;
 }
 
 /**
@@ -106,14 +160,23 @@ export class PersonalSyncer {
   }
 
   /** 同步单个角色的全部端点（串行，避免多端点数据同时在内存中叠加） */
-  async syncCharacter(characterId: number): Promise<PersonalSyncResult> {
+  async syncCharacter(
+    characterId: number,
+    options: SyncCharacterOptions = {},
+  ): Promise<PersonalSyncResult> {
     const corporationInfo = await this.syncPublicInfo(characterId);
     const results: PersonalScopeSyncResult[] = [];
     let anyOk = false;
+    let reauthRequired = false;
     for (const scope of PERSONAL_SCOPES) {
-      const result = await this.syncScope(characterId, scope);
+      const result = await this.syncScope(characterId, scope, options);
       results.push(result);
       if (result.ok) anyOk = true;
+      // 刷新令牌失效：不再尝试剩余端点（重试也不会成功），交由调度层提示重新授权
+      if (result.reauthRequired) {
+        reauthRequired = true;
+        break;
+      }
     }
     if (anyOk) {
       await this.db
@@ -123,21 +186,54 @@ export class PersonalSyncer {
         ])
         .catch(() => undefined);
     }
-    return { characterId, scopes: results, corporationInfo };
+    return { characterId, scopes: results, reauthRequired, corporationInfo };
   }
 
-  /** 同步单个端点（失败隔离：异常只落水位，不向外抛） */
-  async syncScope(characterId: number, scope: PersonalScope): Promise<PersonalScopeSyncResult> {
-    const startedAt = new Date(this.clock.now()).toISOString();
-    await markScopeStarted(this.db, characterId, scope, startedAt);
+  /**
+   * 同步单个端点（失败隔离：异常只落水位，不向外抛）。
+   * 仍在 Cache-Control 有效期内则整轮不发请求（force 可越过）。
+   */
+  async syncScope(
+    characterId: number,
+    scope: PersonalScope,
+    options: SyncScopeOptions = {},
+  ): Promise<PersonalScopeSyncResult> {
+    const states = await loadScopeStates(this.db, characterId);
+    const state = states.get(scope) ?? null;
+    const nowMs = this.clock.now();
+
+    if (options.force !== true && isFresh(state?.expiresAt, nowMs)) {
+      return {
+        scope,
+        ok: true,
+        pages: state?.pages ?? 0,
+        requests: 0,
+        itemsWritten: 0,
+        skipped: true,
+        skippedReason: 'cache',
+        reauthRequired: false,
+        error: null,
+      };
+    }
+
+    await markScopeStarted(this.db, characterId, scope, new Date(nowMs).toISOString());
     try {
-      const result =
+      const outcome =
         scope === 'wallet_balance'
-          ? await this.syncWalletBalance(characterId, scope)
-          : await this.syncPagedScope(characterId, scope);
-      return { scope, ok: true, error: null, ...result };
+          ? await this.syncWalletBalance(characterId, scope, state)
+          : await this.syncPagedScope(characterId, scope, state);
+      return {
+        scope,
+        ok: true,
+        reauthRequired: false,
+        error: null,
+        ...outcome,
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      // 只分类不包装（踩坑 #15）：认证错误由 EsiClient 原样抛出，此处仅识别其类型
+      const reauthRequired =
+        error instanceof TokenManagerError && error.kind === 'reauth_required';
       await markScopeError(this.db, characterId, scope, message).catch(() => undefined);
       return {
         scope,
@@ -146,6 +242,8 @@ export class PersonalSyncer {
         requests: 0,
         itemsWritten: 0,
         skipped: false,
+        skippedReason: null,
+        reauthRequired,
         error: message,
       };
     }
@@ -176,18 +274,26 @@ export class PersonalSyncer {
   private async syncWalletBalance(
     characterId: number,
     scope: PersonalScope,
-  ): Promise<Omit<PersonalScopeSyncResult, 'scope' | 'ok' | 'error'>> {
-    const states = await loadScopeStates(this.db, characterId);
-    const etag = states.get(scope)?.etag ?? undefined;
+    state: PersonalScopeState | null,
+  ): Promise<ScopeSyncOutcome> {
+    const etag = state?.etag ?? undefined;
 
     const result = await this.runScheduled<number>(() =>
       this.client.fetchWalletBalance(characterId, { etag }),
     );
-    const okAt = new Date(this.clock.now()).toISOString();
+    const nowMs = this.clock.now();
+    const okAt = new Date(nowMs).toISOString();
+    const expiresAt = computeExpiresAt(result.cacheControl, nowMs);
 
     if (result.notModified) {
-      await markScopeOk(this.db, characterId, scope, { pages: 1 }, okAt);
-      return { pages: 1, requests: 1, itemsWritten: 0, skipped: true };
+      await markScopeOk(this.db, characterId, scope, { pages: 1, expiresAt }, okAt);
+      return {
+        pages: 1,
+        requests: 1,
+        itemsWritten: 0,
+        skipped: true,
+        skippedReason: 'not-modified',
+      };
     }
 
     const balance = result.data;
@@ -198,8 +304,20 @@ export class PersonalSyncer {
       'UPDATE characters SET wallet_balance = ?, wallet_synced_at = ? WHERE character_id = ?',
       [balance, okAt, characterId],
     );
-    await markScopeOk(this.db, characterId, scope, { etag: result.etag ?? undefined, pages: 1 }, okAt);
-    return { pages: 1, requests: 1, itemsWritten: 1, skipped: false };
+    await markScopeOk(
+      this.db,
+      characterId,
+      scope,
+      { etag: result.etag ?? undefined, pages: 1, expiresAt },
+      okAt,
+    );
+    return {
+      pages: 1,
+      requests: 1,
+      itemsWritten: 1,
+      skipped: false,
+      skippedReason: null,
+    };
   }
 
   // ── 分页端点（assets / journal / orders / contracts / industry / mining / loyalty） ──
@@ -207,27 +325,36 @@ export class PersonalSyncer {
   private async syncPagedScope(
     characterId: number,
     scope: PersonalScope,
-  ): Promise<Omit<PersonalScopeSyncResult, 'scope' | 'ok' | 'error'>> {
+    state: PersonalScopeState | null,
+  ): Promise<ScopeSyncOutcome> {
     if (!(PAGED_SCOPES as readonly string[]).includes(scope)) {
       throw new Error(`scope ${scope} 不是分页端点`);
     }
 
-    const states = await loadScopeStates(this.db, characterId);
     const etags = await loadPageEtags(this.db, characterId, scope);
 
     const fetched = await fetchAllPages<PersonalPageItem>(
       (page, etag) => this.fetchScopePage(scope, characterId, page, etag),
-      { etags, fallbackPages: states.get(scope)?.pages ?? null },
+      { etags, fallbackPages: state?.pages ?? null },
     );
-    const fetchedAt = new Date(this.clock.now()).toISOString();
+    const nowMs = this.clock.now();
+    const fetchedAt = new Date(nowMs).toISOString();
+    const expiresAt = computeExpiresAt(fetched.cacheControl, nowMs);
 
     if (fetched.allNotModified) {
-      await markScopeOk(this.db, characterId, scope, { pages: fetched.pages }, fetchedAt);
+      await markScopeOk(
+        this.db,
+        characterId,
+        scope,
+        { pages: fetched.pages, expiresAt },
+        fetchedAt,
+      );
       return {
         pages: fetched.pages,
         requests: fetched.requests,
         itemsWritten: 0,
         skipped: true,
+        skippedReason: 'not-modified',
       };
     }
 
@@ -235,7 +362,7 @@ export class PersonalSyncer {
 
     await this.db.transaction(async (tx) => {
       await savePageEtags(tx, characterId, scope, fetched.etags, fetchedAt);
-      await markScopeOk(tx, characterId, scope, { pages: fetched.pages }, fetchedAt);
+      await markScopeOk(tx, characterId, scope, { pages: fetched.pages, expiresAt }, fetchedAt);
     });
 
     return {
@@ -243,6 +370,7 @@ export class PersonalSyncer {
       requests: fetched.requests,
       itemsWritten: written,
       skipped: false,
+      skippedReason: null,
     };
   }
 

@@ -3,6 +3,7 @@ export type {
   CharacterContract,
   CharacterOrder,
   CharacterPublicInfo,
+  EsiCacheControl,
   EsiErrorKind,
   EsiErrorLimit,
   EsiRateLimit,
@@ -20,7 +21,7 @@ export { EsiError } from './types';
 export type { HttpClient, HttpGetRequest, HttpResponse } from './http';
 export { readHeader, readNumberHeader } from './http';
 
-export { DEFAULT_ESI_BASE_URL, EsiClient } from './client';
+export { DEFAULT_ESI_BASE_URL, EsiClient, parseCacheControl } from './client';
 export type { EsiAuthProvider, EsiClientOptions, EsiRequestOptions } from './client';
 
 export { createFetchHttpClient } from './fetch-http';

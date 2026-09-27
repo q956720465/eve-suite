@@ -72,6 +72,12 @@ export interface ScopeOkPatch {
   etag?: string;
   /** 本轮确认的页数；分页端点必传 */
   pages?: number;
+  /**
+   * 本轮响应的缓存到期时间（ISO 8601）。**显式覆盖**（不用 COALESCE）：
+   * 不传或传 null 即清空——服务端不再给出 max-age 时必须抹掉上一轮的旧到期时间，
+   * 否则会误判「仍在缓存有效期内」而永久跳过拉取。
+   */
+  expiresAt?: string | null;
 }
 
 export async function markScopeOk(
@@ -82,14 +88,22 @@ export async function markScopeOk(
   okAt: string,
 ): Promise<void> {
   await db.execute(
-    `INSERT INTO personal_sync_state (character_id, scope, etag, pages, last_ok_at)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO personal_sync_state (character_id, scope, etag, pages, expires_at, last_ok_at)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(character_id, scope) DO UPDATE SET
        etag = COALESCE(excluded.etag, personal_sync_state.etag),
        pages = COALESCE(excluded.pages, personal_sync_state.pages),
+       expires_at = excluded.expires_at,
        last_ok_at = excluded.last_ok_at,
        last_error = NULL`,
-    [characterId, scope, patch.etag ?? null, patch.pages ?? null, okAt],
+    [
+      characterId,
+      scope,
+      patch.etag ?? null,
+      patch.pages ?? null,
+      patch.expiresAt ?? null,
+      okAt,
+    ],
   );
 }
 

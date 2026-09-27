@@ -49,6 +49,22 @@ export interface EsiErrorLimit {
   reset: number;
 }
 
+/**
+ * ESI 响应的缓存指令（`Cache-Control` + `Expires` 头解析结果）。
+ * 实测（2026-09-27）ESI 多数端点只用 `public` + `Expires` 传递到期时间，
+ * 只有部分端点给 `max-age`，故两者都要解析。
+ */
+export interface EsiCacheControl {
+  /** max-age 秒数；未声明或非法为 null */
+  maxAgeSeconds: number | null;
+  /** Expires 头解析出的绝对到期时刻（毫秒时间戳）；无该头或非法为 null */
+  expiresAtMs: number | null;
+  /** no-store / no-cache：禁止复用 */
+  noStore: boolean;
+  /** must-revalidate：过期后必须回源校验 */
+  mustRevalidate: boolean;
+}
+
 /** 单次 ESI 请求的结果（含缓存与配额元数据） */
 export interface EsiResult<T> {
   /** 命中 ETag 条件请求（HTTP 304），data 为 null */
@@ -59,6 +75,8 @@ export interface EsiResult<T> {
   pages: number | null;
   rateLimit: EsiRateLimit | null;
   errorLimit: EsiErrorLimit | null;
+  /** 服务端缓存指令（200 与 304 均可能携带）；无该头为 null */
+  cacheControl?: EsiCacheControl | null;
 }
 
 /** 资产项（/characters/{character_id}/assets/） */
