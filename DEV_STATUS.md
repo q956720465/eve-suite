@@ -3,8 +3,8 @@
 > 用途：新会话开局先读本文件 + 方案文档第 8 节，即可定位「做到哪 / 下一步 / 有哪些坑」。
 > 维护规则：每个子模块验收通过后更新一次本文件。
 >
-> **接续入口（新会话从这里开始）**：**P3 已全部完成并验收**（含 P3-8 真数据端到端验证——界面五步全通过、登出/二次授权/重新同步全链路实测）；**P4-1 估值引擎**（唯一定价出口 + 净值/资产页口径切换）、**P4-2 蓝图成本引擎**（BOM × 引擎价 + ME/TE 折扣）、**P4-3 LP 比价引擎**（ESI 公共 LP 商店 + ISK/LP 排名 + LP 组合）均已验收（真实库 / 真实 ESI 零误差，core **283** 用例全绿）。
-> 下一子任务是 **P4-4 矿石精炼值引擎**（需补 SDE 矿石→矿物映射；**开工前先出「任务清单 + 验收清单」交用户确认**）。跳到「## 下一步」看待办清单，跳到「## P4 进度」看 P4-1 / P4-2 / P4-3 明细与实测记录。
+> **接续入口（新会话从这里开始）**：**P3 已全部完成并验收**（含 P3-8 真数据端到端验证——界面五步全通过、登出/二次授权/重新同步全链路实测）；**P4 四大引擎全部完成**：P4-1 估值引擎、P4-2 蓝图成本引擎、P4-3 LP 比价引擎、**P4-4 矿石精炼值引擎**（均已真实库 / 真实数据零误差验收，core **297** 用例全绿）。
+> 下一子任务是 **P4-5 计算器页**（三大计算器 UI：蓝图成本 / LP 比价 / 矿石精炼值 + 与官网算例对照归档；**开工前先出「任务清单 + 验收清单」交用户确认**）。跳到「## 下一步」看待办清单，跳到「## P4 进度」看 P4-1 ~ P4-4 明细与实测记录。
 > 关键外部配置：CCP 应用 Callback URL 必须是 `http://127.0.0.1:14565/callback`（详见决策区与踩坑 #23）。
 
 ## 总览
@@ -15,7 +15,7 @@
 | **P1 SDE 数据基座** | ✅ 全部完成（含 UI 人工复验） | 官方 SDE 下载/转换/入库 + 中英文搜索 |
 | **P2 行情模块** | ✅ 全部完成（含 UI 人工复验） | 5 枢纽 5 分钟采集 + 按需行情 + 监视列表 |
 | **P3 OAuth 个人数据** | ✅ 全部完成（含真数据端到端验证） | 本地回环授权 + 七类数据同步（含调度）+ 资产/净值页；**界面五步验收 + 登出/二次授权/重新同步全链路实测通过** |
-| **P4 四大引擎** | 🔄 进行中（P4-1 / P4-2 / P4-3 已完成） | 估值 + 蓝图成本 + LP 比价已落地；余 矿石精炼值 |
+| **P4 四大引擎** | ✅ 全部完成 | 估值 + 蓝图成本 + LP 比价 + 矿石精炼值均已落地并验收；余 P4-5 计算器页 |
 | P5 整合功能 + 全域层 | 未开始 | |
 | P6 分发打磨 | 未开始 | 仓库需由私有转公开；macOS 签名 / 公证 |
 
@@ -130,8 +130,8 @@
 | P4-1 估值引擎 | ✅ 完成 | `engines/valuation.ts`（方案 §6.3 唯一定价出口）：口径 `p5_sell`（默认）/`best_sell`；回退链 **主口径 → 另一口径 → missing**；基准可切区域与站点（站点级按 `market_orders.location_id` 重算）；可选 **10 倍中位数离群过滤**；批量入口 `valueItems`。**净值与资产页口径已切换**（`networth.ts` / `assets.ts`），常量 `DEFAULT_VALUATION_REGION_ID` 归属引擎 |
 | P4-2 蓝图成本引擎 | ✅ 完成 | `engines/blueprint.ts`：材料 `max(runs, ceil(round2(基础量 × runs × (1 − ME/100))))`（**取整在任务层**、**每 run 至少 1 单位**）、时长 `ceil(基础时长 × runs × (1 − TE/100))`；单价一律走估值引擎（口径/基准/站点/过滤透传）、缺价计 0 并列入 `missingTypeIds`、可选 `includeBlueprintPrice`；支持 6 类活动（`manufacturing` 默认）、多件产出、无产出行与非蓝图容错 |
 | P4-3 LP 比价引擎 | ✅ 完成 | `lp/sync.ts` + `lp/repo.ts`（数据源 **ESI 公共端点** `/loyalty/stores/{corp}/offers/`，无需授权）+ `engines/lp.ts`：`netIsk = 产出估值 − 材料成本 − ISK 支出`、`ISK/LP = netIsk ÷ lpCost`；默认跳过 `ak_cost > 0`；`rankLpOffers` / `buildLpPortfolio`（× 真实 LP 余额 → 「每军团换什么、共值多少 ISK」）。新迁移 **0005**（复合主键，见踩坑 #26） |
-| P4-4 矿石精炼值引擎 | 未开始 | 需补 SDE 矿石→矿物映射（现导入未含 `typeMaterials`） |
-| P4-5 计算器页 + 端到端 | 未开始 | Fuzzworks 对标 + 官网算例对照归档 |
+| P4-4 矿石精炼值引擎 | ✅ 完成 | 扩 SDE 导入（`typeMaterials.jsonl`）+ 迁移 **0006**（`sde_type_materials`）+ `engines/refining.ts`：`份数 = floor(数量 ÷ portion_size)`、`产物 = floor(基础量 × 份数 × 产出率)`、`净产值 = 产值 × (1 − 税)`；`refineOre` / `listOreMaterials` / `listRefinableOres`。默认产出率 0.5（NPC 站无技能）、税 0 |
+| P4-5 计算器页 + 端到端 | 未开始 | 三大计算器 UI + Fuzzworks 对标 + 官网算例对照归档 |
 
 **P4-1 实测记录（2026-09-28，真实库只读核验 + 单测）**：
 - 静态：core **219 → 243 用例全绿**（新增 engines 22 条 + 净值口径 2 条；29 个文件）；`tsc --noEmit`（core / ui）通过；`pnpm --filter @eve-suite/ui build` 通过；本轮未动 Rust（`cargo test` 不涉及）
@@ -229,28 +229,61 @@
 - **产出无报价的 offer（多为蓝图类 BPC）返回 `iskPerLp = null` 并在结果中单列计数 `unpricedOutputOffers`**（方案 A 定稿，2026-09-28）：**不虚构估算值**；计数不受 `limit` / `minIskPerLp` 影响
 - **调度优先级**：`ondemand`（按需刷新）
 
+**P4-4 实测记录（2026-09-28，真实库副本 + 真实 SDE 全量重导 + 单测）**：
+- 静态：core **283 → 297 用例全绿**（新增精炼 14 条；33 个文件）；`tsc --noEmit`（core / ui）与 `ui build` 通过；未动 Rust
+- **迁移 v4 → v6**（真实库 `VACUUM INTO` 副本；**运行库仍 v4**）：应用 **2** 条（0005 + 0006）→ `schemaVersion = 6`
+- **真实 SDE 全量重导**：`skipped = false`、耗时 **1,837ms**；`sde_type_materials` = **47,080 行 / 9,545 个类型**（官方 `typeMaterials.jsonl` 共 9,555 行，其中 10 行无有效材料）
+- **重导前后既有表行数完全一致**：`sde_types` **53,060** / `sde_blueprint_io` **42,830** / `market_orders` 890,852 / `assets` 1,495 / `lp_balances` 6
+- **幂等**：紧接着再导入 → `skipped = true`（构建号 + 文件集签名一致）；**文件集签名机制实测有效**：运行库无 `imported_files` 记录（P1 导入时不含该键）→ 本次自动重导，无需人工干预
+- 官方 zip 实测：共 **102 个 JSONL** 成员；`types.jsonl` 解压后 **107.7MB**（导入耗时主因）、`typeMaterials.jsonl` 2.15MB
+- **已知矿石映射**（官方 SDE 真实值）：Veldspar 1230 → 400 三钛/100 单位；Scordite → 150 三钛 + 110 类晶体胶矿；Plagioclase 18 → 175 + 70；Spodumain 19 → 48,000 + 1,000 + 160 + 80 + 40；Blue Ice 16264 → 69 + 35 + 1 + 414
+- **可精炼矿石清单**：**440 种**（Asteroid + 已发布 + 有映射）；已发布 Asteroid 类型中 **20 种无映射**（引擎按 `unmapped: true` 返回，不抛错）
+- **精炼抽查（1,000 单位，产出率 50%，吉他 5% 分位）**：
+
+  | 矿石 | 产物 | 产值（ISK） | 每 m³ |
+  |---|---|---|---|
+  | 1230 凡晶石 | 三钛 ×2,000 @3.7505 | 7,501 | 75 |
+  | 1228 灼烧岩 | 三钛 ×750 + 类晶体胶矿 ×550 | 12,252 | 82 |
+  | 18 斜长岩 | 三钛 ×875 + 类晶体胶矿 ×350 | 21,181 | 61 |
+  | 19 灰岩 | 三钛 ×240,000 + 4 种高阶矿物 | 3,145,395 | 197 |
+  | 16264 蓝冰 | 4 种冰产物（氧同位素 ×207,000 等） | 134,651,646 | 135 |
+
+  全部无缺价；手算零误差：凡晶石 1,000 单位 → 10 份 × 400 × 0.5 = **2,000 三钛** ✓
+- **A4 第三方对照**：Fuzzwork `/ore/` 与其 LP 页同为**表单 POST + 免责 cookie**（页面内 `quantity-*` 元素实测 0 个）→ 不可程序化；改用 **EVE University wiki「Reprocessing」的实机算例**：120,000 单位 Plagioclase、产出率 69.575%（50% × 1.15 × 1.1 × 1.1）→ 页面给出 **146,107 + 58,443**，我方公式 `floor(175 × 1200 × 0.69575) = 146,107`、`floor(70 × 1200 × 0.69575) = 58,443`，**零误差**（页面文字把该矿物标为 Pyerite 属陈旧表述——页面自标「待更新」，数量 70 与官方 SDE 的 Mexallon 一致）。**已固化为永久用例**
+
+**P4-4 口径（已定）**：
+- **数据源 = 官方 SDE `typeMaterials.jsonl`**（无第三方依赖；P1 未导入该文件，P4-4 扩展导入）
+- 精炼**按整份**：`份数 = floor(数量 ÷ portion_size)`，不足一份的余数不精炼并随结果返回 `leftoverUnits`（EVE 行为）
+- **`产物量 = floor(基础量 × 份数 × 产出率)`**（逐矿物向下取整）
+- **税按价值扣减**：`净产值 = 产出估值 × (1 − 税率)`，**不减少产物数量**
+- 默认 **产出率 0.50**（NPC 站、无技能）、**税 0**；技能与建筑**不入模**（用产出率参数替代，留 P5）
+- 估价一律走 P4-1 估值引擎；缺价产物计 0 并列入 `missingTypeIds`
+- `listRefinableOres` 口径 = **分类 Asteroid（25）+ 已发布 + 有精炼映射**；而 `refineOre` 对**任意**有映射的类型都可算（含冰/气/月矿），不限于该清单
+- **SDE 导入的跳过条件 = 构建号一致 **且** 文件集签名（`sde_meta.imported_files`）一致** → 以后新增数据文件时自动重导，无需人工 `force`
+
 ## 数据库现状
 
-- schema 版本：**v5**（v1 settings + v2 SDE 11 表 + v3 行情 7 表 + v4 个人数据 10 表 + v5 LP 商店 3 表）
-- 迁移文件：`0001-settings` `0002-sde-tables` `0003-market-tables` `0004-personal-tables` `0005-lp-tables`（**已发布，禁止修改，只能新增**）
+- schema 版本：**v6**（v1 settings + v2 SDE 11 表 + v3 行情 7 表 + v4 个人数据 10 表 + v5 LP 商店 3 表 + v6 类型材料 1 表）
+- 迁移文件：`0001-settings` `0002-sde-tables` `0003-market-tables` `0004-personal-tables` `0005-lp-tables` `0006-type-materials`（**已发布，禁止修改，只能新增**）
+- v6 表：`sde_type_materials`（主键 `(type_id, material_type_id)`，来自官方 SDE `typeMaterials.jsonl`，47,080 行 / 9,545 类型）
 - v5 LP 表：`lp_offers`（主键 `(corporation_id, offer_id)`）`lp_offer_items` `lp_store_state`；真实库副本 v4→v5 迁移实测通过（行数不变）
-- **运行库当前仍为 v4**（P4-3 只在**副本**上跑了迁移；下次启动应用会自动升到 **v5** 并建 3 张 LP 表——属正常路径，已由迁移执行器幂等保证）
+- **运行库当前仍为 v4**（P4-3 / P4-4 只在**副本**上跑迁移；下次启动应用会**一次性升到 v6**：自动建 LP 3 表 + 类型材料表，并因缺少 `imported_files` 签名而**自动重导一次 SDE**（解压 `typeMaterials.jsonl` 后导入，实测约 2s 级）——均属正常路径，已由迁移执行器与导入器幂等保证）
 - v4 个人数据表：`characters` `assets` `wallet_journal` `my_orders` `contracts` `industry_jobs` `mining_ledger` `lp_balances` `networth_snapshots` `personal_sync_state`（字段按官方 **OpenAPI 3.1** 逐端点核对）
 - 真实运行库升级实测：v3 → v4 应用 1 个迁移，`market_orders` 890,552 行与 `sde_types` 53,060 行**行数不变**，10 张新表就位，库内 `idx_` 索引 28 个
 - 运行库位置：`%APPDATA%\com.eve-suite.desktop\eve-suite.db`（WAL）
-- SDE 缓存：`%APPDATA%\com.eve-suite.desktop\sde-cache\`（11 个 JSONL，约 160MB）
+- SDE 缓存：`%APPDATA%\com.eve-suite.desktop\sde-cache\`（**12 个 JSONL，约 270MB**；P4-4 起含 `typeMaterials.jsonl`，`types.jsonl` 单独约 108MB）
 - 实测入库（SDE build 3542233）：types 53,060 / stations 5,210 / blueprints 5,082 / 配方材料 42,830
 - 实测采集（真实行情）：**5 枢纽 890,701 条订单**（伏尔戈 403,514 / 多美 182,019 / 美特伯里斯 119,361 / 西玛特尔 71,330 / 金纳泽 114,477），聚合出 56,347+ 条 market_stats；Tritanium 实测 吉他 卖 3.69 / 买 3.70 / 5% 分位 3.762
-- 测试：core **283 用例全绿**（32 个文件；P4-1 新增 24、P4-2 新增 21、P4-3 新增 19）；Rust **12 用例全绿**（另有 1 个 `#[ignore]` 真钥匙串往返自检，用 `cargo test -- --ignored --nocapture` 手动跑）
+- 测试：core **297 用例全绿**（33 个文件；P4-1 新增 24、P4-2 新增 21、P4-3 新增 19、P4-4 新增 14）；Rust **12 用例全绿**（另有 1 个 `#[ignore]` 真钥匙串往返自检，用 `cargo test -- --ignored --nocapture` 手动跑）
 - UI：`pnpm --filter @eve-suite/ui build` 通过（tsc + vite）；P3-8 **界面五步验收全部通过**（①立即同步 ②切页签不中断 ③暂停/恢复 ④生成今日快照 ⑤登出清除 + 二次授权 + 重新同步）；P4-1 更新资产页口径文案并**做了真机界面复核**（净值卡 / 资产表前 4 行 / 展开明细与库内直算逐项一致，见 P4-1 实测记录）
-- P4-1 / P4-2 **未新增迁移**（当时 schema 仍 v4）；**P4-3 新增迁移 0005**（LP 商店 3 表，schema → v5）：估值/蓝图引擎只读既有 `market_stats` / `market_orders` / `sde_blueprints*`，LP 引擎只读 `lp_*` 与 `lp_balances`
+- P4-1 / P4-2 **未新增迁移**（当时 schema 仍 v4）；**P4-3 新增迁移 0005**（LP 商店 3 表）、**P4-4 新增迁移 0006**（类型材料 1 表，schema → v6）：估值/蓝图引擎只读既有 `market_stats` / `market_orders` / `sde_blueprints*`，LP 引擎只读 `lp_*` 与 `lp_balances`，精炼引擎只读 `sde_type_materials` / `sde_types` / `sde_groups`
 - P3-8 收尾后的库态（登出清空 → 二次授权 → 重新同步恢复）：`characters` 1 / `assets` 1495 / `wallet_journal` 2 / `lp_balances` 6 / `networth_snapshots` 1 / 水位 8 条 / `personal:` ETag 8 条
-- 机密存储：OAuth 刷新令牌存**系统钥匙串**（服务名 `com.eve-suite.desktop`），**数据库零令牌字段**（v5 亦不含任何令牌列；LP 商店为公共数据，无需授权）
+- 机密存储：OAuth 刷新令牌存**系统钥匙串**（服务名 `com.eve-suite.desktop`），**数据库零令牌字段**（v6 亦不含任何令牌列；LP 商店为公共数据，无需授权）
 
 ## 下一步
 
-1. **P4-4 矿石精炼值引擎**（下一子任务）：矿石精炼产值 = Σ(矿物量 × 引擎价) − 损耗/税（方案 §6.1 计算器 / §6.2 采矿时薪）。需要：**补 SDE 矿石→矿物映射**（现 SDE 导入只含 11 个 JSONL，未含 `typeMaterials`；需扩导入或另辟数据源）+ 精炼产出率（`sde_types.portion_size` 已入库，矿石通常 100）+ 站/建筑税率参数。**开工前先出「任务清单 + 验收清单」交用户确认。** 之后 P4-5（计算器页 + 与 Fuzzworks 算例端到端对照归档）。
-2. **待推送**：本地有数个提交未推送（起点 `9130776` → `6d3c6b1`）；推送时机由用户掌控（推送后 CI 才会跑）
+1. **P4-5 计算器页**（P4 收尾子任务）：三大计算器 UI（蓝图成本 / LP 比价 / 矿石精炼值）+ 与官网算例对照归档。可复用引擎：`computeBlueprintCost` / `rankLpOffers` / `buildLpPortfolio` / `refineOre` / `listRefinableOres`。需设计：参数面板（ME/TE、runs、产出率、税率、区域/站点基准）、缺价与估算的显式标注、SDE 重导入口（P4-4 起导入文件集变化会触发重导）。**开工前先出「任务清单 + 验收清单」交用户确认。**
+2. **待推送**：本地有数个提交未推送（起点 `9130776` → `d28227a`）；推送时机由用户掌控（推送后 CI 才会跑）
 3. 已知待办（非阻塞；凡涉及改动已有代码，均需先出方案并确认）：
    - **P2 行情采集未用共享调度器**（方案 §4.4 要求全局令牌桶单例）：`packages/ui/src/market/useMarketCollector.ts` 自建 `RequestScheduler`，与 P3 新增的 `ui/src/core/runtime.ts` 未统一
    - **core 数据库层对瞬时锁的容错**：连接池 + 外部进程并发时曾观测到该轮同步因 `SQLITE_BUSY`（`database is locked`）整轮失败；根治需评估 `BEGIN IMMEDIATE` / BUSY 重试，属独立议题（P3-9 只把核验脚本改为只读打开，未动 core）
@@ -323,6 +356,10 @@
    - 对策：`lp_offers` 主键 = **`(corporation_id, offer_id)`**，`lp_offer_items` 主键 = `(corporation_id, offer_id, type_id)`；整体替换按 `corporation_id` 直接删除即可（无需子查询）。已加回归用例「同一 offer_id 在不同军团可共存」。
    - 通用教训：**第三方/官方数据的「ID」先确认作用域**（全局唯一 / 军团内唯一 / 区域内唯一）；跨作用域复用 ID 的字段一律进复合主键。同类风险点：`market_orders.order_id`（实测全局唯一，暂无需改）。
    - 另一条工程经验：**真实数据核验能抓住单测抓不到的作用域缺陷**——本次若只跑单测（fixture 单军团）会全绿放行。
+27. **【P4-4】SDE 导入的「跳过」判断不能只看构建号**：新增数据文件（如 `typeMaterials.jsonl`）时 SDE 构建号往往未变，若只比对构建号，**新文件永远不会落库**，而且**不报错**（静默缺数据，单测也测不出——fixture 里该文件总是存在）。
+   - 对策：把「导入文件集签名」写进 `sde_meta.imported_files`，跳过条件 = 构建号一致 **且** 文件集一致；`SDE_REQUIRED_FILES` 与导入文件集**共用同一常量**（`SDE_IMPORTED_FILES`），避免两处漂移（否则会出现「缓存检查要求新文件、导入器却不读它」的错位）。
+   - 相关实测：`types.jsonl` 解压后 **107.7MB**（zip 内压缩 22.4MB），导入耗时主要花在 `JSON.parse` 这 5.3 万行；官方 zip 共 **102 个 JSONL** 成员。
+   - 核验脚本注意：**先把 zip 成员解压到本地缓存再离线导入**；直接用多次 Range 分片请求拉成员容易超时（实测 24 次 Range 中挂过一次 → 改单次整包下载，94.6MB/27s 完成）。
 
 ## 关键文件地图
 
@@ -351,7 +388,10 @@
 | **蓝图成本引擎（P4-2）** | `packages/core/src/engines/blueprint.ts`（BOM / ME-TE 折扣 / 成本编排） |
 | **LP 比价引擎（P4-3）** | `packages/core/src/engines/lp.ts`（ISK/LP 排名 / LP 组合） |
 | **LP 商店同步与仓储（P4-3）** | `packages/core/src/lp/sync.ts`、`lp/repo.ts`（ESI 公共端点 + ETag/TTL + 整团替换） |
+| **矿石精炼值引擎（P4-4）** | `packages/core/src/engines/refining.ts`（整份精炼 / 产出率 / 税 / 单位产值） |
+| **SDE 导入器（P1 + P4-4 扩展）** | `packages/core/src/sde/{types,parse,import,tauri}.ts`（`SDE_IMPORTED_FILES` 文件集签名 + `typeMaterials.jsonl`） |
 | 迁移 0005（LP 三表） | `packages/core/src/db/migrations/0005-lp-tables.ts` |
+| 迁移 0006（类型材料） | `packages/core/src/db/migrations/0006-type-materials.ts` |
 | 个人数据同步（P3-5） | `packages/core/src/personal/`（scopes / rows / state / sync）+ `esi/paging.ts` |
 | 个人数据调度（P3-6） | `packages/core/src/personal/scheduler.ts`、`personal/repo.ts`；缓存解析在 `esi/client.ts` 的 `parseCacheControl` |
 | UI：资产页 / 授权 / 同步 Hook | `packages/ui/src/personal/`（AssetsPage.tsx、useCharacters.ts、usePersonalSync.ts） |
@@ -383,6 +423,8 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 - **聚合行情**：`https://market.fuzzwork.co.uk/aggregates/?region=<regionId>&types=<逗号分隔 id>` → `sell.min/median/percentile/volume/orderCount`（`percentile` = **成交量加权** 5% 分位，见 A7 对照）
 - **LP 商店（P4-3）数据层可程序化对照**：`https://www.fuzzwork.co.uk/lpstore/data/lpOffers.csv`（报价：`offerID,corporationID,typeID,quantity,lpCost,akCost,iskCost`）与 `lpOfferRequirements.csv`（需求材料：`offerID,typeID,quantity`）。**注意其 `offerID` 与 ESI `offer_id` 是不同编号体系 → 按属性元组对照，不要按 ID join**
 - **LP 商店计算页不可程序化**（表单 POST + 免责 cookie；其文档口径：默认 **Jita 5% 分位**，**蓝图类产出按材料成本估值**——本项目未实现后者，见「下一步 · 已知待办」）
+- **矿石精炼（P4-4）**：Fuzzwork `/ore/` 与其 LP 页同为**表单 POST + 免责 cookie**（页面内 `quantity-*` 元素实测 0 个）→ 不可程序化。改用 **EVE University wiki**（第三方人工维护，`https://wiki.eveuniversity.org/Refining`）：其「Reprocessing」页实机算例 **120,000 单位 Plagioclase @ 69.575% → 146,107 + 58,443**，与本项目公式（`floor(基础量 × 份数 × 产出率)`）**零误差**，已固化为用例（注意：该页自标「待更新」，示例中第二矿物的**名称**文字陈旧，数量与官方 SDE 一致）
+- **读官方 SDE zip 成员的方法（核验脚本用）**：整包下载 → 从尾部定位 EOCD（`PK\x05\x06`）→ 读中央目录（`PK\x01\x02`）→ 用本地头偏移 + `zlib.inflateRawSync` 解压；实测 zip 含 **102 个 JSONL**（成员清单不通过 `latest.jsonl` 暴露，只能如此读取）
 - **LP 商店权威数据源**：ESI 公共端点 `https://esi.evetech.net/latest/loyalty/stores/{corporation_id}/offers/`（无需授权）
 
 ## 会话纪要（2026-09-28）
@@ -399,8 +441,9 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 | 4 | **P4-1 估值引擎**（唯一定价出口 + 净值/资产页口径切换） | 通过（真实库抽查零误差 + 界面逐项一致 + 第三方口径对照） | `6b31a9c`（11 文件，+871 / −83） |
 | 5 | **P4-2 蓝图成本引擎**（BOM × 引擎价 + ME/TE 折扣 + 可选蓝图价） | 通过（真实库 + Fuzzwork 基础量零误差） | `33052dc`（4 文件，+658 / −1） |
 | 6 | **P4-3 LP 比价引擎**（ESI 公共 LP 商店 + ISK/LP 排名 + LP 组合） | 通过（真实库副本迁移 + 真实 ESI 抓取逐条一致） | `6d3c6b1`（13 文件，+1,284） |
+| 7 | **P4-4 矿石精炼值引擎**（SDE `typeMaterials` 导入 + 整份精炼/产出率/税） | 通过（副本 v4→v6 + 真实 SDE 全量重导 + 第三方算例零误差） | `d28227a`（11 文件，+780 / −20） |
 
-**关键验收证据**（完整记录见「P3-8 核验记录」「P3-9 实测记录」，以及「## P4 进度」下的 P4-1 / P4-2 / P4-3 实测记录）
+**关键验收证据**（完整记录见「P3-8 核验记录」「P3-9 实测记录」，以及「## P4 进度」下的 P4-1 / P4-2 / P4-3 / P4-4 实测记录）
 
 - 步骤 ④：界面净值卡与快照行严格相等 `138,161,761,314.6 = 136,735,404,335.68 + 1,426,356,978.92`
 - 步骤 ⑤：登出后 `characters` / 8 张个人表 / 8 条水位 / `personal:` ETag 8 条 / 快照**全清零**、钥匙串条目消失；**P2/P1 零误伤**（`market_orders` 891,667 / `sde_types` 53,060 / `watchlist_items` 1）
@@ -414,7 +457,8 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 
 **该会话结束时的仓库 / 环境状态**
 
-- 最新提交：P4-3 `6d3c6b1`（本次纪要为紧随其后的 docs 提交）；**工作区干净**；`main` 领先 `origin/main`（`28c3475` → `6d3c6b1`，含 P4-1 / P4-2 / P4-3 及配套 docs 提交），**未推送**
-- 核验用临时用例（`zz-realdb-verify.test.ts` / `zz-realdb-p42.test.ts` / `zz-realdb-p43.test.ts`）**跑完均已删除**，未入库；P4-1 界面复核启动的 `pnpm tauri dev` **已按用户要求停止**（`eve-suite.exe` 进程已结束），P4-3 核验改用「真实库副本 + 真实 ESI」，**全程未动运行库**
+- 最新提交：P4-4 `d28227a`（本次纪要为紧随其后的 docs 提交）；**工作区干净**；`main` 领先 `origin/main`（`28c3475` → `d28227a`，含 P4-1 ~ P4-4 及配套 docs 提交），**未推送**
+- 核验用临时用例（`zz-realdb-verify.test.ts` / `zz-realdb-p42.test.ts` / `zz-realdb-p43.test.ts` / `zz-realdb-p44.test.ts`）**跑完均已删除**，未入库；P4-1 界面复核启动的 `pnpm tauri dev` **已按用户要求停止**（`eve-suite.exe` 进程已结束）
+- P4-4 核验辅助（留在 `%TEMP%`，可复用）：解压脚本 `eve-extract-sde.mjs`（官方 zip → 12 个 JSONL 落到 `%TEMP%\eve-sde-extract\`，约 27s）、核验副本 `eve-suite-p44-copy.db`（已按需清理）；P4-3 的「副本迁移 + 真实 ESI」核验同理**全程未动运行库**
 - 遗留非阻塞待办与下一步见「## 下一步」第 2、3 条
 
