@@ -109,6 +109,21 @@ body {
   min-width: 200px;
 }
 
+/* 参数区里的复选框：与其他字段同一行基线对齐 */
+.params label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #d7e3f0;
+}
+
+.params label.check input {
+  min-width: 0;
+  width: auto;
+  padding: 0;
+}
+
 .panel {
   background: #121721;
   border: 1px solid #1f2937;
