@@ -210,7 +210,12 @@
   | **合计** | | | | **1,281,161,645 ISK** |
 - 手算校验（零误差样例）：offer **4180**（type 27086 ×1、LP 375、ISK 375,000、无材料）= (1,649,550 − 375,000) ÷ 375 = **3,398.8** ✓
 - **真实数据暴露的设计缺陷（已修）**：`offer_id` **在不同军团间重复**（1000035/1000041/1000167 返回同一批 offer_id）→ 原「offer_id 单列主键」触发 `UNIQUE constraint failed`；改为主键 `(corporation_id, offer_id)`（迁移未提交前修正，见踩坑 #26），并加回归用例
-- **A4 Fuzzwork 对照：无法程序化取数**（其 LP 页是 JS 表单 + 免责确认，`/lpstore/api/lpstore.php` 返回 File not found；无公开 LP API）→ 按确认的方案改为**人工核对清单**（上表 offer 与 ISK/LP 可逐条核对）。其页面同时明示 **"Prices are as per a simulated 5% buy from the Jita market"**，即默认价格口径为 **Jita 5% 分位**，与本项目默认口径一致
+- **A4 Fuzzwork 对照（数据层已程序化，零误差）**：Fuzzwork 公开了 LP 原始数据 CSV —— `https://www.fuzzwork.co.uk/lpstore/data/lpOffers.csv`（31,847 条 / 181 军团；列序 `offerID,corporationID,typeID,quantity,lpCost,akCost,iskCost`）与 `lpOfferRequirements.csv`（35,066 条需求材料）。与 ESI 官方数据交叉核对 3 个军团（1000125 / 1000035 / 1000120，共 863 条 offer）：
+  - offer 条数逐军团相等（234 / 310 / 319）
+  - **属性元组 `(typeID, quantity, lpCost, akCost, iskCost)` 多重集不一致 = 0 项**
+  - **需求材料多重集不一致 = 0 项**（1 / 150 / 155 种）
+  - 注意：**Fuzzwork 的 `offerID` 与 ESI 的 `offer_id` 是不同编号体系**（同军团条数相等但 ID 不对应）→ 对照必须按**属性元组**对齐，不能按 ID join
+- **ISK/LP 数值对照：仍不可程序化**（其计算表由表单 POST + 免责 cookie 触发；`items.php` 只返回物品名自动补全源）→ 保留人工核对路径。其页面明示口径 **"Prices are as per a simulated 5% buy from the Jita market"**（= Jita 5% 分位），与本项目默认一致；配合手算样例零误差
 - ⚠️ **已知口径差异（待你决定，未实现）**：Fuzzwork 对**蓝图类产出**按「生产技能 PE5 的材料成本」估算其价值；本项目对**无市场报价的产出**（含 BPC）返回 `iskPerLp = null`（不虚构估值）→ 这类 offer 目前不参与排名。若要覆盖，需引入「蓝图成本估值 + ME/PE 假设」，属引擎扩展，**建议单独立项确认**
 
 **P4-3 口径（已定）**：
@@ -375,7 +380,8 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 **第三方对照接口（验收用，无需 key）**：
 - **蓝图基础量**：`https://www.fuzzwork.co.uk/blueprint/api/blueprint.php?typeid=<id>` → `activityMaterials`（按活动 ID：1=制造 / 3=TE 研究 / 4=ME 研究 / 5=复制 / 8=发明）、`blueprintDetails`（产物 / `times` / `maxProductionLimit`）。**只返回基础量**（实测忽略 `runs` / `me` / `te` 参数）
 - **聚合行情**：`https://market.fuzzwork.co.uk/aggregates/?region=<regionId>&types=<逗号分隔 id>` → `sell.min/median/percentile/volume/orderCount`（`percentile` = **成交量加权** 5% 分位，见 A7 对照）
-- **LP 商店（P4-3）**：Fuzzwork 的 LP 页（`https://www.fuzzwork.co.uk/lpstore/`）**无公开 API**（JS 表单 + 免责确认；`/lpstore/api/lpstore.php` 404）→ 对照需人工核对。其页面口径说明：默认 **"Prices are as per a simulated 5% buy from the Jita market"**（= Jita 5% 分位，与本项目默认一致）；**蓝图类产出按 PE5 材料成本估值**（本项目未实现，见「下一步 · 已知待办」）
+- **LP 商店（P4-3）数据层可程序化对照**：`https://www.fuzzwork.co.uk/lpstore/data/lpOffers.csv`（报价：`offerID,corporationID,typeID,quantity,lpCost,akCost,iskCost`）与 `lpOfferRequirements.csv`（需求材料：`offerID,typeID,quantity`）。**注意其 `offerID` 与 ESI `offer_id` 是不同编号体系 → 按属性元组对照，不要按 ID join**
+- **LP 商店计算页不可程序化**（表单 POST + 免责 cookie；其文档口径：默认 **Jita 5% 分位**，**蓝图类产出按材料成本估值**——本项目未实现后者，见「下一步 · 已知待办」）
 - **LP 商店权威数据源**：ESI 公共端点 `https://esi.evetech.net/latest/loyalty/stores/{corporation_id}/offers/`（无需授权）
 
 ## 会话纪要（2026-09-28）
