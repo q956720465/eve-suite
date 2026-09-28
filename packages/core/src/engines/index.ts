@@ -53,15 +53,20 @@ export {
   ASTEROID_CATEGORY_ID,
   DEFAULT_REFINE_TAX,
   DEFAULT_REFINE_YIELD,
+  NPC_STATION_BASE_YIELD,
+  REFINE_YIELD_PRESETS,
+  computeNpcStationYield,
   computeRefinedQuantity,
   listOreMaterials,
   listRefinableOres,
   refineOre,
 } from './refining';
 export type {
+  NpcStationYieldInput,
   OreMaterial,
   RefinableOre,
   RefineMaterialLine,
   RefineOreInput,
   RefineOreResult,
+  RefineYieldPreset,
 } from './refining';

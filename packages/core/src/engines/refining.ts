@@ -16,11 +16,100 @@ import { valueItems, type ValuationOptions } from './valuation';
 /** 默认精炼产出率：NPC 空间站基础值（无技能） */
 export const DEFAULT_REFINE_YIELD = 0.5;
 
+/** NPC 空间站设备基础产出率（与 {@link DEFAULT_REFINE_YIELD} 同值，语义上区分「站设备」与「默认参数」） */
+export const NPC_STATION_BASE_YIELD = 0.5;
+
 /** 默认税率：不扣税 */
 export const DEFAULT_REFINE_TAX = 0;
 
 /** 矿石/冰/月矿所属分类（SDE category 25 = Asteroid） */
 export const ASTEROID_CATEGORY_ID = 25;
+
+export interface NpcStationYieldInput {
+  /** Reprocessing 技能等级 0–5（每级 +3%） */
+  reprocessing?: number;
+  /** Reprocessing Efficiency 技能等级 0–5（每级 +2%） */
+  reprocessingEfficiency?: number;
+  /** 对应矿种处理技能等级 0–5（每级 +2%，如 Veldspar Processing） */
+  oreProcessing?: number;
+  /** 植入体加成（如 RX-804 = 0.04） */
+  implantBonus?: number;
+}
+
+/**
+ * NPC 站精炼产出率（EVE 公式，见 EVE University wiki「Reprocessing」）：
+ * `产出率 = 50% × (1 + 0.03 × Reprocessing) × (1 + 0.02 × ReprocessingEfficiency)
+ *          × (1 + 0.02 × 矿种处理) × (1 + 植入体)`
+ *
+ * **只覆盖 NPC 站口径**：不含玩家建筑 rig 加成与建筑税（那需要建筑数据，属 P5）。
+ * 技能等级按 0–5 夹取；返回值上限 1（100%）。
+ */
+export function computeNpcStationYield(input: NpcStationYieldInput = {}): number {
+  const level = (value: number | undefined): number => {
+    if (value === undefined || !Number.isFinite(value)) return 0;
+    return Math.min(5, Math.max(0, Math.floor(value)));
+  };
+  const implant =
+    input.implantBonus === undefined || !Number.isFinite(input.implantBonus)
+      ? 0
+      : Math.max(0, input.implantBonus);
+
+  const yieldRate =
+    NPC_STATION_BASE_YIELD *
+    (1 + 0.03 * level(input.reprocessing)) *
+    (1 + 0.02 * level(input.reprocessingEfficiency)) *
+    (1 + 0.02 * level(input.oreProcessing)) *
+    (1 + implant);
+  return Math.min(1, yieldRate);
+}
+
+export interface RefineYieldPreset {
+  id: string;
+  labelZh: string;
+  yieldRate: number;
+}
+
+/**
+ * 产出率预设（P4-5 计算器界面用；均为 **NPC 站**口径）。
+ * 顺序为「逐步加技能」的递增序列；矿种处理技能按**与所选矿石匹配且满级**假设。
+ * 用户可选「自定义」直接输入百分比。
+ */
+export const REFINE_YIELD_PRESETS: readonly RefineYieldPreset[] = [
+  {
+    id: 'none',
+    labelZh: 'NPC 站 · 无技能（50%）',
+    yieldRate: computeNpcStationYield(),
+  },
+  {
+    id: 'reprocessing5',
+    labelZh: 'Reprocessing V（57.5%）',
+    yieldRate: computeNpcStationYield({ reprocessing: 5 }),
+  },
+  {
+    id: 'efficiency5',
+    labelZh: 'Reprocessing V + Efficiency V（63.25%）',
+    yieldRate: computeNpcStationYield({ reprocessing: 5, reprocessingEfficiency: 5 }),
+  },
+  {
+    id: 'ore5',
+    labelZh: '上者 + 矿种处理 V（69.575%）',
+    yieldRate: computeNpcStationYield({
+      reprocessing: 5,
+      reprocessingEfficiency: 5,
+      oreProcessing: 5,
+    }),
+  },
+  {
+    id: 'implant4',
+    labelZh: '上者 + RX-804 植入体（72.358%）',
+    yieldRate: computeNpcStationYield({
+      reprocessing: 5,
+      reprocessingEfficiency: 5,
+      oreProcessing: 5,
+      implantBonus: 0.04,
+    }),
+  },
+];
 
 export interface RefineOreInput {
   oreTypeId: number;

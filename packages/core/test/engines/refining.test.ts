@@ -4,6 +4,9 @@ import type { DbAdapter } from '../../src/db/types';
 import {
   DEFAULT_REFINE_TAX,
   DEFAULT_REFINE_YIELD,
+  NPC_STATION_BASE_YIELD,
+  REFINE_YIELD_PRESETS,
+  computeNpcStationYield,
   computeRefinedQuantity,
   listOreMaterials,
   listRefinableOres,
@@ -124,6 +127,65 @@ async function setupDb() {
   await insertStats(db, { typeId: PYERITE, p5Sell: 8 });
   return db;
 }
+
+describe('computeNpcStationYield / REFINE_YIELD_PRESETS', () => {
+  it('按 EVE 公式逐项累乘（wiki「Reprocessing」口径）', () => {
+    expect(NPC_STATION_BASE_YIELD).toBe(0.5);
+    expect(computeNpcStationYield()).toBeCloseTo(0.5, 10);
+    expect(computeNpcStationYield({ reprocessing: 5 })).toBeCloseTo(0.575, 10);
+    expect(computeNpcStationYield({ reprocessing: 5, reprocessingEfficiency: 5 })).toBeCloseTo(
+      0.6325,
+      10,
+    );
+    expect(
+      computeNpcStationYield({ reprocessing: 5, reprocessingEfficiency: 5, oreProcessing: 5 }),
+    ).toBeCloseTo(0.69575, 10);
+    expect(
+      computeNpcStationYield({
+        reprocessing: 5,
+        reprocessingEfficiency: 5,
+        oreProcessing: 5,
+        implantBonus: 0.04,
+      }),
+    ).toBeCloseTo(0.72358, 10);
+  });
+
+  it('技能等级按 0–5 夹取，非法植入体忽略，产出率上限 100%', () => {
+    expect(computeNpcStationYield({ reprocessing: 9 })).toBeCloseTo(0.575, 10);
+    expect(computeNpcStationYield({ reprocessing: -3 })).toBeCloseTo(0.5, 10);
+    expect(computeNpcStationYield({ oreProcessing: 2.7 })).toBeCloseTo(0.5 * 1.04, 10);
+    expect(computeNpcStationYield({ implantBonus: Number.NaN })).toBeCloseTo(0.5, 10);
+    expect(computeNpcStationYield({ implantBonus: 5 })).toBe(1);
+  });
+
+  it('预设序列与公式一致、严格递增，且含 wiki 算例用的 69.575%', () => {
+    expect(REFINE_YIELD_PRESETS.map((preset) => Number(preset.yieldRate.toFixed(6)))).toEqual([
+      0.5, 0.575, 0.6325, 0.69575, 0.72358,
+    ]);
+    expect(REFINE_YIELD_PRESETS.find((preset) => preset.id === 'ore5')?.yieldRate).toBeCloseTo(
+      0.69575,
+      10,
+    );
+    for (let index = 1; index < REFINE_YIELD_PRESETS.length; index += 1) {
+      expect(REFINE_YIELD_PRESETS[index].yieldRate).toBeGreaterThan(
+        REFINE_YIELD_PRESETS[index - 1].yieldRate,
+      );
+    }
+  });
+
+  it('预设值可直接喂给 refineOre（凡晶石 1,000 单位 · 满技能 = 2,783 三钛）', async () => {
+    const db = await setupDb();
+    const ore5 = REFINE_YIELD_PRESETS.find((preset) => preset.id === 'ore5');
+
+    const result = await refineOre(db, {
+      oreTypeId: VELDSPAR,
+      quantity: 1000,
+      yieldRate: ore5?.yieldRate,
+    });
+
+    expect(result.materials[0].quantity).toBe(2783); // floor(400 × 10 × 0.69575)
+  });
+});
 
 describe('computeRefinedQuantity', () => {
   it('向下取整，且非法输入返回 0', () => {
