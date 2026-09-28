@@ -57,6 +57,26 @@ export {
 } from './watchlist';
 export type { WatchlistItem } from './watchlist';
 
+export {
+  DEFAULT_SPREAD_FILTERS,
+  SPREAD_ANCHOR_RATIO,
+  SPREAD_MIN_ACTIVE_DAYS,
+  getSpreadFreshness,
+  judgeSpreadHistory,
+  rankCrossRegionSpreads,
+  readSpreadHistoryStats,
+  validateSpreadHistory,
+} from './spread';
+export type {
+  SpreadFreshness,
+  SpreadHistoryReason,
+  SpreadHistoryStats,
+  SpreadHistoryVerdict,
+  SpreadQueryOptions,
+  SpreadRow,
+  SpreadSortKey,
+} from './spread';
+
 export { getCollectStates, getDailyHistory, getOrderBook, getTypeStats, getTypeStatsAcrossHubs } from './repo';
 export type {
   HubCollectState,

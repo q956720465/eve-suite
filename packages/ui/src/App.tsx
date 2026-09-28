@@ -13,12 +13,14 @@ import AssetsPage from './personal/AssetsPage';
 import { useCharacters } from './personal/useCharacters';
 import { usePersonalSync } from './personal/usePersonalSync';
 import SdePage from './sde/SdePage';
+import SpreadPage from './market/SpreadPage';
 
-type Tab = 'sde' | 'market' | 'watchlist' | 'assets' | 'calc';
+type Tab = 'sde' | 'market' | 'spread' | 'watchlist' | 'assets' | 'calc';
 
 const TABS: readonly { id: Tab; label: string }[] = [
   { id: 'sde', label: '数据' },
   { id: 'market', label: '行情' },
+  { id: 'spread', label: '价差' },
   { id: 'watchlist', label: '监视' },
   { id: 'assets', label: '资产' },
   { id: 'calc', label: '计算' },
@@ -117,7 +119,7 @@ export default function App() {
             ))}
           </nav>
         </div>
-        <p className="subtitle">P4 计算器 · 资产与净值 · 行情采集 · 监视列表</p>
+        <p className="subtitle">P4 计算器 · 资产与净值 · 行情采集 · 跨区价差 · 监视列表</p>
         <p className="meta">
           core 版本：<code>{CORE_VERSION}</code>
         </p>
@@ -131,6 +133,7 @@ export default function App() {
 
       {tab === 'sde' && <SdePage />}
       {tab === 'market' && <MarketPage collector={collector} scanner={globalScanner} />}
+      {tab === 'spread' && <SpreadPage />}
       {tab === 'watchlist' && <WatchlistPage />}
       {tab === 'assets' && <AssetsPage characters={characters} sync={personalSync} />}
       {tab === 'calc' && <CalcPage lpStore={lpStore} />}
