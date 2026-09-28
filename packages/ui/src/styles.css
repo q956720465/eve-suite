@@ -65,6 +65,50 @@ body {
   gap: 14px;
 }
 
+.calc {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 计算器参数面板：一行可换行的表单 */
+.params {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 14px;
+  margin: 4px 0 10px;
+}
+
+.params label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #8a97a8;
+}
+
+.params input,
+.params select {
+  background: #0d131c;
+  border: 1px solid #24313f;
+  border-radius: 6px;
+  color: #d7e3f0;
+  padding: 8px 10px;
+  font-size: 13px;
+  min-width: 120px;
+}
+
+.params input:focus,
+.params select:focus {
+  outline: none;
+  border-color: #3f7ea6;
+}
+
+.params .search {
+  min-width: 200px;
+}
+
 .panel {
   background: #121721;
   border: 1px solid #1f2937;
