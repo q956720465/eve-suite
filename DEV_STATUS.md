@@ -379,7 +379,8 @@
 | 子任务 | 状态 | 备注 |
 |---|---|---|
 | **P5-1 全域 6 小时层** | ✅ 完成（真机 + 真实 ESI 验收） | 新增迁移 **0007**（`market_global_scan_state` 单行状态表）；`market/global.ts`（`GlobalMarketScanner`）+ `market/global-state.ts`（档位 / 到期判定 / 区域清单 / 状态读写）+ `db/settings.ts`（`settings` 表读写）；行情页新增「全域层 · 跨区快照」区块（档位下拉 / 覆盖区域 / 上次全量完成 / 下次自动扫描 / 本轮进度 / 本轮写入 / 最近错误 / 立即扫描） |
-| P5-2~ 整合功能 | 未开始 | 库存缺口 / LP 优化器 / 精确净值 / Undercut 提醒 / 工业成本闭环 / 采矿时薪 + 跨区价差视图 + 托盘/Webhook 提醒 |
+| **P5-2 跨区价差视图** | ✅ 完成（真实库脚本 11/11 + 真机界面 + 真实 ESI 历史校验验收） | 新顶层页签「价差」；`market/spread.ts`（两段式过滤：SQL 粗筛 + 候选历史校验）+ 19 条用例；`SpreadPage.tsx`（区域范围 / 排序 / 条数上限 / 历史校验降级标注 / 快照新鲜度行） |
+| P5-3~ 整合功能 | 未开始 | 库存缺口 / 精确净值补完 / 采矿时薪 / 工业成本闭环 / 提醒系统（托盘 + Webhook）+ Undercut |
 
 **P5-1 实测记录（2026-09-28，真实库副本迁移 + 真实 ESI 两轮全量 + 真机界面）**：
 - 静态：core **308 → 331** 用例全绿（新增 global-state 9 + global 13 + 采集器失败水位 2；移除已废弃的「区域级让路」2 条）；`tsc --noEmit`（core / ui）与 `ui build` 通过；Rust **16 + 1 ignored** 不回归（本阶段未动 Rust、未改已发布迁移）
@@ -414,6 +415,26 @@
 - **关闭档不删数据**：仅停更，界面标注「已关闭」；清理 / VACUUM 策略留后续
 - **共享调度器（P5-1-0）**：`packages/ui/src/market/useMarketCollector.ts` 改为取 `initCoreRuntime()` 的 db / ESI client / scheduler（方案 §4.4 全局令牌桶单例）——枢纽层与全域层因此共用同一优先级队列，「让路」才有意义
 
+**P5-2 实测记录（2026-09-28，真实库脚本 + 真机界面 + 真实 ESI 历史校验）**：
+- 静态：core **331 → 350** 用例全绿（`market/spread.test.ts` 新增 19：配对字段 / p5 抗钓鱼 / 门槛过滤 / 价差率上限 / NULL 排除 / regionIds / 三键排序 + NULL 沉底 / limit / 默认口径 / freshness / judge 全路径 / 历史窗口 / 按需拉取零重复）；`tsc --noEmit`（core / ui）与 `ui build` 通过（chunk >500kB 警告为既有情况）；未动 Rust、未新增迁移
+- **真实库核验脚本 `%TEMP%\eve-verify-p52.cjs` 11/11 全过**（只读运行库，与 core 完全同口径 SQL）：
+  - Top50 查询 **611ms**（全库 211k 行 `market_stats` 自连接，无额外索引）；快照新鲜度 211,832 行统计
+  - **朴素对照组（best 价、无门槛）Top5 全是钓鱼单**：Velator 0.02 → 7,426（+3712 万%）等 → 证明粗筛必要性；过滤后 Top50 价差率全部 ≤300% 且买价 ≥1 ISK
+  - Top1 独立复算全等：金属碎片 `spreadIsk 676.6` / `rate 0.299248…` / `iskPerM3 67,660`
+  - ISK/m³ 排序、枢纽模式（快照 69,518 行、行内仅枢纽区名）均正确
+- **真机界面验收（computer-use，pid 54532）**：「价差」页签就位；表格 Top1 与脚本一致（金属碎片 美特伯里斯 226.1 → 多美 902.7，299.2%，ISK/m³ 67,660）；快照新鲜度行正常；combo 切「仅五大枢纽」生效
+- **历史校验（真实 ESI 按需拉取）**：50 行候选 → 71 个 (region,type) pair 去重后真实抓取、27,760 行日线入库，`ondemand` 优先级为枢纽轮次让路约 70 秒完成；复看零请求（`refreshTypeHistory` 当日跳过 + ESI 24h 缓存）
+  - **50 行候选仅 4 条通过、28+ 条「价格异常」**——贴 300% 上限的候选 92% 被 30 天均价锚判异常，第二段校验价值实证；通过行均为真实可交易价差（辅助零件 多美 12.69 → 伏尔戈 41.32，225.6%；帝国海军军士长勋章I 西玛特尔 10,200 → 金纳泽 30,000，194.1%）
+- 失败行**降级标注不删除**（无历史 / 价格异常 / 7 天不活跃三种 reason），与设计一致
+
+**P5-2 口径（已定，经用户确认「两段式过滤」方案）**：
+- **两段式过滤**：
+  - 第一段 SQL 粗筛（零请求）：`market_stats` 自连接，买价 = 买入区 `p5_sell`（5% 分位，抗钓鱼）、卖价 = 卖出区 `p95_buy`（95% 分位）；流动性门槛 **两侧订单数 ≥5**；价差率上限 **300%**（默认，可调）；排序三键（价差率 / 价差 ISK / ISK/m³）
+  - 第二段候选历史校验（按需 ESI 拉取）：**30 天均价锚 ±2.5×**（eve-hub.ru 口径，操纵订单剔除）+ **卖出区近 7 天成交天数 ≥4**（Oracle Market Genius 口径）；不过的行降级标注不删除
+- **第三方参考（2026 年活跃工具实证）**：eve-hub.ru（>2.5× 30 天均价剔除、按成交频率过滤流动性）、Oracle Market Genius（「裸毛利扫描 90% 是陷阱」：7 天成交天数 / 库存天数 / 波动率锚）、Trading Matrix（日成交量 ≥100）、eve-trading.net（最大投资 / 货舱上限）
+- **语义澄清**：`market_stats.sell_volume` 是**在架量**（`volume_remain` 汇总）**非成交量** → 流动性门槛用订单数而非在架量；`market_history_daily` 仅按需覆盖（65 区 × 1.7 万种全量不现实）→ 候选集按需拉取是唯一现实路径
+- 校验请求走 `ondemand` 优先级（低于枢纽层），`refreshTypeHistory` 复用（当日已抓取跳过 + ESI 24h 缓存 → 复看零请求）
+
 ## 数据库现状
 
 - schema 版本：**v7**（v1 settings + v2 SDE 11 表 + v3 行情 7 表 + v4 个人数据 10 表 + v5 LP 商店 3 表 + v6 类型材料 1 表 + v7 全域扫描状态 1 表）
@@ -426,16 +447,16 @@
 - 运行库位置：`%APPDATA%\com.eve-suite.desktop\eve-suite.db`（WAL）
 - SDE 缓存：`%APPDATA%\com.eve-suite.desktop\sde-cache\`（**12 个 JSONL，约 270MB**；P4-4 起含 `typeMaterials.jsonl`，`types.jsonl` 单独约 108MB）
 - 实测入库（SDE build 3542233）：types 53,060 / stations 5,210 / blueprints 5,082 / 配方材料 42,830 / **类型材料 47,080**（9,545 个类型有精炼映射；可精炼矿石 440 种）
-- 实测采集（真实行情）：**全库 1,551,331 条订单 = 5 枢纽 891,282 条**（伏尔戈 404,558 / 多美 182,244 / 美特伯里斯 119,523 / 西玛特尔 70,557 / 金纳泽 114,642）**+ 全域层 65 区 660,049 条**（54 个非枢纽区有订单，其余 11 个经 ESI 直读确认零订单）；`market_collect_state` 覆盖 **70** 区域；聚合出约 8 万条 market_stats
-- 测试：core **331 用例全绿**（36 个文件；P4-1 新增 24、P4-2 新增 21、P4-3 新增 19、P4-4 新增 14、P4-5-1 新增 4、**DB-1 新增 7**、**P5-1 新增 23**）；Rust **16 用例全绿**（另有 1 个 `#[ignore]` 真钥匙串往返自检，用 `cargo test -- --ignored --nocapture` 手动跑）
-- UI：`pnpm --filter @eve-suite/ui build` 通过（tsc + vite）；P3-8 **界面五步验收全部通过**（①立即同步 ②切页签不中断 ③暂停/恢复 ④生成今日快照 ⑤登出清除 + 二次授权 + 重新同步）；P4-1 更新资产页口径文案并**做了真机界面复核**（净值卡 / 资产表前 4 行 / 展开明细与库内直算逐项一致，见 P4-1 实测记录）；**P4-5-2 蓝图成本面板真机验收通过**（首屏 / 蓝图价 / runs-ME-TE / 803 多产出 / 37011 无产出行 / 活动 / 区域 8 项，与只读基准逐项一致，见 P4-5-2 实测记录）；**P4-5-3 LP 比价面板真机验收通过**（组合 6 行与排名前 8 行逐项一致、force 刷新、区域切换、24h 缓存复用，见 P4-5-3 实测记录）；**P4-5-4 算例对照面板真机验收通过**（三张卡：蓝图全零误差 / LP 固定量零误差且价格类标注漂移 / 矿石零误差，见 P4-5-4 实测记录）；**P5-1 全域层面板真机验收通过**（档位五档可切换并持久化、暂停区域边界收尾、恢复从第 12 区续扫、catch-up 自动触发、关闭档零请求、表内数值与库内直读一致，见 P5-1 实测记录）
+- 实测采集（真实行情）：**全库 1,551,331 条订单 = 5 枢纽 891,282 条**（伏尔戈 404,558 / 多美 182,244 / 美特伯里斯 119,523 / 西玛特尔 70,557 / 金纳泽 114,642）**+ 全域层 65 区 660,049 条**（54 个非枢纽区有订单，其余 11 个经 ESI 直读确认零订单）；`market_collect_state` 覆盖 **70** 区域；聚合出约 21.2 万条 market_stats（P5-2 验收实测 211,832 行，此前「约 8 万」为枢纽层时期旧值）
+- 测试：core **350 用例全绿**（37 个文件；P4-1 新增 24、P4-2 新增 21、P4-3 新增 19、P4-4 新增 14、P4-5-1 新增 4、**DB-1 新增 7**、**P5-1 新增 23**、**P5-2 新增 19**）；Rust **16 用例全绿**（另有 1 个 `#[ignore]` 真钥匙串往返自检，用 `cargo test -- --ignored --nocapture` 手动跑）
+- UI：`pnpm --filter @eve-suite/ui build` 通过（tsc + vite）；P3-8 **界面五步验收全部通过**（①立即同步 ②切页签不中断 ③暂停/恢复 ④生成今日快照 ⑤登出清除 + 二次授权 + 重新同步）；P4-1 更新资产页口径文案并**做了真机界面复核**（净值卡 / 资产表前 4 行 / 展开明细与库内直算逐项一致，见 P4-1 实测记录）；**P4-5-2 蓝图成本面板真机验收通过**（首屏 / 蓝图价 / runs-ME-TE / 803 多产出 / 37011 无产出行 / 活动 / 区域 8 项，与只读基准逐项一致，见 P4-5-2 实测记录）；**P4-5-3 LP 比价面板真机验收通过**（组合 6 行与排名前 8 行逐项一致、force 刷新、区域切换、24h 缓存复用，见 P4-5-3 实测记录）；**P4-5-4 算例对照面板真机验收通过**（三张卡：蓝图全零误差 / LP 固定量零误差且价格类标注漂移 / 矿石零误差，见 P4-5-4 实测记录）；**P5-1 全域层面板真机验收通过**（档位五档可切换并持久化、暂停区域边界收尾、恢复从第 12 区续扫、catch-up 自动触发、关闭档零请求、表内数值与库内直读一致，见 P5-1 实测记录）；**P5-2 价差页真机验收通过**（页签就位、Top1 与脚本一致、快照新鲜度行、枢纽切换、历史校验真实 ESI 拉取并降级标注，见 P5-2 实测记录）
 - P4-1 / P4-2 **未新增迁移**（当时 schema 仍 v4）；**P4-3 新增迁移 0005**（LP 商店 3 表）、**P4-4 新增迁移 0006**（类型材料 1 表，schema → v6）：估值/蓝图引擎只读既有 `market_stats` / `market_orders` / `sde_blueprints*`，LP 引擎只读 `lp_*` 与 `lp_balances`，精炼引擎只读 `sde_type_materials` / `sde_types` / `sde_groups`
 - P3-8 收尾后的库态（登出清空 → 二次授权 → 重新同步恢复）：`characters` 1 / `assets` 1495 / `wallet_journal` 2 / `lp_balances` 6 / `networth_snapshots` 1 / 水位 8 条 / `personal:` ETag 8 条
 - 机密存储：OAuth 刷新令牌存**系统钥匙串**（服务名 `com.eve-suite.desktop`），**数据库零令牌字段**（v7 亦不含任何令牌列；LP 商店与全域行情均为公共数据，无需授权）
 
 ## 下一步
 
-1. **P4 + P5-1 已完成**（四大引擎 + 计算器页 4 面板 + 全域 6 小时层）。**下一阶段 = P5-2 起：六大整合功能**（库存缺口分析 / LP 优化器（引擎已具备）/ 精确净值（已具备）/ Undercut 提醒 / 工业成本闭环 / 采矿时薪）+ **跨区价差视图**（全域层数据已就绪：70 区域 `market_stats`）+ 托盘/Webhook 提醒。**开工前先出「任务清单 + 验收清单」交用户确认**。
+1. **P4 + P5-1 + P5-2 已完成**（四大引擎 + 计算器页 4 面板 + 全域 6 小时层 + 跨区价差视图）。**下一项 = P5-3：库存缺口分析**；其后依次建议：P5-4 精确净值补完 → P5-5 采矿时薪 → P5-6 工业成本闭环（含 LP BPC 产出估值待办）→ P5-7 提醒系统（托盘 + Webhook）+ Undercut。**开工前先出「任务清单 + 验收清单」交用户确认**。
 2. **待推送**：本地有多个提交未推送（起点 `9130776` 起累积）；推送时机由用户掌控（推送后 CI 才会跑）
 3. 已知待办（非阻塞；凡涉及改动已有代码，均需先出方案并确认）：
    - ~~**P2 行情采集未用共享调度器**~~ **已统一（2026-09-28，P5-1-0）**：`useMarketCollector` 改为取 `initCoreRuntime()` 的共享 db / client / scheduler，枢纽层与全域层共用同一优先级队列、「让路」生效；仍未做的是「全域层与个人数据同步是否再分层限速」
@@ -446,6 +467,8 @@
    - **估值分位口径是否对齐第三方**：当前 `p5_sell` = 按订单数线性插值；ISK.GG/Fuzzwork 用**成交量加权**（A7 实测差异 +0.004%~+0.014%，数据本身一致）。若要新增「成交量加权」口径，属引擎 + P2 采集侧扩展，**需先出方案**
    - **LP offer 的 BPC 类产出估值**（**方案 A 已定**：暂不实现，留 **P5 工业成本闭环**）：Fuzzwork 对「产出为蓝图」的 offer 按材料成本估算；本项目返回 `iskPerLp = null` 并单列 `unpricedOutputOffers`。将来实现时需先定 3 个参数：ME 假设、BPC 的 runs 取法、是否与实测 offer 混排
    - **枢纽区是否也纳入全域轮次**：本阶段按「方案 A」排除 5 枢纽（由 5 分钟层维护）。若将来希望「枢纽层单独关闭时全域层仍能覆盖全部 70 区」，需另开方案（会让全域轮次请求量翻倍）
+   - **`computeMarketStats` 未过滤 `min_volume > 1` 订单（P5-2 调研新发现）**：`market_orders.min_volume` 已入库但聚合未用 → `best_sell` 可能被「整批大单」钓鱼污染。本期不动已验收代码，价差视图靠订单数 ≥5 + p5 分位兜底；若要在聚合层修复，属 P2 采集口径变更，**需先出方案并确认**
+   - **价差视图二期候选（P5-2 评审时记录，均未承诺）**：订单簿深度走量 / 现实捕获份额（避免「价差大但吃不下」）→ 留 P5-6 工业成本闭环一并考虑；库存天数口径 → 同期二期；当前「近 7 天成交天数」已覆盖流动性主风险
 
 ## 踩坑备忘（重要，勿重蹈）
 
@@ -547,6 +570,8 @@
 33. **【P5-1 实测】Vite HMR 重载会让 Hook 瞬时重建 → 采集器实例翻倍，制造「并发轮次」假象**：应用运行中改 `packages/ui/src/**` 会触发 HMR，`App` 重挂载使 `useMarketCollector` / `useGlobalScanner` 重新初始化（`busyRef` 是新实例的 `false`）→ 可能在旧实例的在途轮次仍在跑时**再开一轮**。表现为：同区域被两轮反复整区替换、写锁争用加剧、单轮耗时异常（实测枢纽一轮从 ~2 分钟变成 4~5 分钟，最后一区长时间不更新）。
    - 对策：**改前端代码时先停掉 dev 应用**（或改完立刻整页重载 `Ctrl+R` 复位），完成后再重启应用做验收；判据是「同一时刻出现的重复轮次 / 单区时间戳长时间不推进」。
    - 连带结论：任何**用 HMR 期间的观测量**得出的性能结论都不可信（本次「10 分钟只推进 1 区」就混入了这个干扰）——性能结论必须在**干净重启后的单实例**上复测。
+34. **【P5-2 实测】dev 应用运行中严禁再起第二个 `pnpm tauri dev`——新实例失败退出，还可能连带带走原实例**：端口 1420 被占导致第二个实例启动失败（退出码非 0），且原实例（pid 2472）随后也消失了（`No window found for pid`），疑似子进程组被连带清理。对策：**起 dev 前先确认已有实例**（`Get-NetTCPConnection -LocalPort 1420` 或 `list_apps`）；需要重启时先干净停旧再起新，绝不并行起两个。
+   - 连带经验：UIA 树观察的 element_id 带有 diff 上下文，**跨较长时间或界面大改后必须 `disableDiff: true` 重取全量树**再取 id（本次点了过期 id 的「价差」页签未生效，重取后成功）；UIA 树对长表格有**深度截断**（树里 32 行 vs 候选 50 行），行数级断言不要依赖 UIA 树，改用 DB 直查。
 
 ## 关键文件地图
 
@@ -571,6 +596,7 @@
 | OAuth 回环服务（Rust） | `src-tauri/src/oauth.rs` |
 | 系统钥匙串（Rust） | `src-tauri/src/secrets.rs` |
 | 行情采集 / 统计 / 按需 / 监视 | `packages/core/src/market/` |
+| **跨区价差（P5-2）** | `packages/core/src/market/spread.ts`（`rankCrossRegionSpreads` SQL 粗筛 / `judgeSpreadHistory` + `validateSpreadHistory` 历史校验 / `getSpreadFreshness`）；UI 页 `packages/ui/src/market/SpreadPage.tsx` |
 | **全域层扫描器（P5-1）** | `packages/core/src/market/global.ts`（`GlobalMarketScanner`：整区替换 / 断点续扫 / 让路=优先级 / 失败隔离 / 暂停） |
 | **全域层档位与状态（P5-1）** | `packages/core/src/market/global-state.ts`（五档、到期与 catch-up、单行状态读写、区域清单 70/65） |
 | **应用设置读写（P5-1）** | `packages/core/src/db/settings.ts`（`readSetting` / `writeSetting`，`settings` 键值表） |
@@ -611,6 +637,7 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 - `%TEMP%\eve-verify-p41.cjs` —— **P4-1 用（估值口径）**：按引擎同口径（`p5_sell` → `best_sell` 回退）现算资产估值 / 净值四分项 / 资产估值 Top6（含中文名），用于与界面资产页逐项对照
 - `%TEMP%\eve-verify-a7.cjs` —— **A7 用（第三方口径对照）**：对指定 type 列表同时按「订单数插值 5% 分位」（core 口径）与「成交量加权 5% 分位」（ISK.GG/Fuzzwork 口径）复算，便于与 Fuzzwork 聚合接口逐项比对
 - `%TEMP%\eve-verify-p51.cjs` —— **P5-1 用（全域层）**：非枢纽区域数与订单数 Top5 / 区域水位行数 / `market_stats` 与从 `market_orders` 手算的聚合逐项比对（内部一致性）/ 整区 `order_id` 集合与 ESI 直读比对（外部一致性，输出 onlyDb / onlyEsi）/ 零订单区域向 ESI 抽查
+- `%TEMP%\eve-verify-p52.cjs` —— **P5-2 用（跨区价差）**：与 core 同口径 SQL 复算 Top50（含 Top1 独立复算 spreadIsk/rate/iskPerM3）/ 朴素对照组（best 价无门槛，验证钓鱼单剔除）/ 价差率上限与买价 ≥1 ISK 断言 / ISK/m³ 排序 / 枢纽模式 / 快照新鲜度，11 项断言
 - 运行：`node "$env:TEMP\eve-verify-p41.cjs"`（应用运行中亦可）
 - **注意（P3-9 实测修正）**：此前「WAL 只读无冲突」的说法不严谨——脚本当时是**读写打开**（`new DatabaseSync(path)` 默认读写），与应用的写事务并发时曾导致该轮同步 `database is locked`（`SQLITE_BUSY`）整轮失败；现已改为 **`readOnly: true` 打开**，并在同步进行中并发 4 次未复现。**仍建议避开同步写入窗口运行**（正在同步时先别跑）
 - 注意：`node:sqlite` 是实验特性，会打印 ExperimentalWarning，可忽略
@@ -696,4 +723,31 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 - 工作区改动：新增 `packages/core/src/{db/settings.ts,db/migrations/0007-market-global.ts,market/global.ts,market/global-state.ts}`、`packages/core/test/market/{global-state,global}.test.ts`、`packages/ui/src/market/{useGlobalScanner.ts,GlobalScanPanel.tsx}`；修改 `packages/core/src/db/{index.ts,migrations/index.ts}`、`packages/core/src/market/{index.ts,collector.ts}`、`packages/core/test/market/collector.test.ts`、`packages/ui/src/{App.tsx,market/MarketPage.tsx,market/useMarketCollector.ts}`、`DEV_STATUS.md`；`main` 领先 `origin/main`，**未推送**
 - 应用**正在运行**（`pnpm tauri dev`，command `2120c108-5989-4d31-9624-d7026a789eff`，`eve-suite.exe` pid **2472**），需停则 `StopCommand`
 - 核验脚本：`%TEMP%\eve-verify-p51.cjs`（全域层只读核验）；临时用例 `packages/core/test/tmp-real-db-migration.test.ts` 已删除
+
+## 会话纪要（2026-09-28 · 晚：P5-2 跨区价差视图）
+
+> 同上：仅供追溯，权威事实以「## P5 进度」为准。
+
+**该会话完成事项**
+
+| # | 事项 | 结果 | 提交 |
+|---|---|---|---|
+| 1 | 用户问「流动性与异常过滤有无第三方参考」→ 调研（eve-hub.ru / Oracle Market Genius / Trading Matrix / eve-trading.net）并出「两段式过滤」方案 | 通过（用户确认） | — |
+| 2 | **P5-2-1** core `market/spread.ts`（SQL 粗筛 + freshness + 历史校验判定/按需拉取）+ `market/index.ts` 导出 | 通过 | 见下 |
+| 3 | **P5-2-2 / 2-2.5** `spread.test.ts` 19 条用例（复用 on-demand mock-http 基建） | 通过（331 → 350 全绿） | 见下 |
+| 4 | **P5-2-3** UI `SpreadPage.tsx` + `App.tsx` 新页签「价差」 | 通过（真机验收） | 见下 |
+| 5 | **P5-2-4** 静态校验：core 350 用例 + tsc（core/ui）+ ui build | 通过 | 见下 |
+| 6 | **P5-2-5** 真实库脚本 11/11 + 真机界面 + 真实 ESI 历史校验（71 pair / 27,760 行 / 4 通过 28 价格异常）+ DEV_STATUS 更新 | 通过 | 见下 |
+
+**关键验收证据**：完整记录见「## P5 进度」下的「P5-2 实测记录」与「P5-2 口径」，以及踩坑 #34。摘要：
+- 朴素对照组（无门槛）Top5 全是钓鱼单（Velator +3712 万%）；过滤后 Top50 全部 ≤300%、Top1 独立复算全等
+- 历史校验：50 行候选仅 4 条通过（贴 300% 上限的候选 92% 被均价锚判异常）→ 两段式设计价值实证；通过行均为真实可交易价差
+- 中途事故：误起第二个 `pnpm tauri dev` 致原实例死亡 → 干净重启后完成验收（踩坑 #34）
+
+**该会话结束时的仓库 / 环境状态**
+
+- 工作区改动：新增 `packages/core/src/market/spread.ts`、`packages/core/test/market/spread.test.ts`、`packages/ui/src/market/SpreadPage.tsx`；修改 `packages/core/src/market/index.ts`、`packages/ui/src/App.tsx`、`DEV_STATUS.md`；未新增迁移、未动 Rust；`main` 领先 `origin/main`，**未推送**
+- 应用**正在运行**（`pnpm tauri dev` 后台 job `job-46438c56315d41498a6329f257b3aa83`，`eve-suite.exe` pid **54532**，端口 1420，5 枢纽采集中、全域档 6h），需停则 `StopCommand`
+- 核验脚本：`%TEMP%\eve-verify-p52.cjs`（跨区价差只读核验，11 项断言）
+- 下一步：P5-3 库存缺口分析（开工前先出「任务清单 + 验收清单」交用户确认）
 
