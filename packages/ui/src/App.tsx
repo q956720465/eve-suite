@@ -135,7 +135,7 @@ export default function App() {
             ))}
           </nav>
         </div>
-        <p className="subtitle">P4 计算器 · 资产与净值 · 行情采集 · 跨区价差 · 监视列表</p>
+        <p className="subtitle">P5 全域行情 · 跨区价差 · 历史全量 · 库存缺口 · 资产与净值 · 计算器</p>
         <p className="meta">
           core 版本：<code>{CORE_VERSION}</code>
         </p>

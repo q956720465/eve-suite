@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { DbAdapter } from '../../src/db/types';
 import { DEFAULT_VALUATION_REGION_ID } from '../../src/engines/valuation';
 import {
+  computeAccountNetWorth,
   computeNetWorth,
   listSnapshots,
   writeDailySnapshot,
@@ -79,6 +80,42 @@ async function insertOrder(
       price,
       volumeRemain,
       isBuyOrder === null ? null : isBuyOrder ? 1 : 0,
+    ],
+  );
+}
+
+/** 插入一条合同（默认：公开、个人、我发起） */
+async function insertContract(
+  db: DbAdapter,
+  contractId: number,
+  overrides: {
+    characterId?: number;
+    type?: string;
+    status?: string;
+    forCorporation?: number;
+    issuerId?: number;
+    acceptorId?: number;
+    price?: number | null;
+    reward?: number | null;
+  } = {},
+): Promise<void> {
+  await db.execute(
+    `INSERT INTO contracts (character_id, contract_id, type, status, availability, for_corporation,
+                            issuer_id, issuer_corporation_id, assignee_id, acceptor_id,
+                            date_issued, date_expired, price, reward, collateral, buyout, volume,
+                            days_to_complete, start_location_id, end_location_id, fetched_at)
+     VALUES (?, ?, ?, ?, 'public', ?, ?, 0, 0, ?, '2026-09-01T00:00:00Z', '2026-10-01T00:00:00Z',
+             ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, '2026-09-27T00:00:00Z')`,
+    [
+      overrides.characterId ?? CHARACTER_ID,
+      contractId,
+      overrides.type ?? 'item_exchange',
+      overrides.status ?? 'outstanding',
+      overrides.forCorporation ?? 0,
+      overrides.issuerId ?? CHARACTER_ID,
+      overrides.acceptorId ?? 0,
+      overrides.price ?? null,
+      overrides.reward ?? null,
     ],
   );
 }
@@ -161,7 +198,103 @@ describe('computeNetWorth', () => {
       contractsValue: 0,
       distinctTypeCount: 0,
       missingPriceTypes: 0,
+      missingTypeIds: [],
     });
+  });
+
+  it('缺价明细：missingTypeIds 列出无报价物品（与计数同源）', async () => {
+    const db = await setup(0);
+    await insertAsset(db, 1, 34, 10);
+    await insertAsset(db, 2, 99, 1);
+    await insertAsset(db, 3, 77, 1);
+    await insertStats(db, 34, 5);
+
+    const result = await computeNetWorth(db, CHARACTER_ID);
+
+    expect(result.missingPriceTypes).toBe(2);
+    expect(result.missingTypeIds).toEqual([77, 99]); // 按 type_id 升序（查询已 ORDER BY）
+  });
+
+  it('合同分项（P5-4 轻口径）：只计我发起且 outstanding 的 item_exchange 与我承接的 courier', async () => {
+    const db = await setup(0);
+    const other = 96099998;
+    await insertContract(db, 1, { price: 5000 }); // 我发起 · item_exchange · outstanding → 计
+    await insertContract(db, 2, { issuerId: other, price: 9999 }); // 非我发起 → 不计
+    await insertContract(db, 3, { forCorporation: 1, price: 7777 }); // 公司合同 → 不计
+    await insertContract(db, 4, { type: 'courier', acceptorId: CHARACTER_ID, reward: 300 }); // 我承接 courier → 计
+    await insertContract(db, 5, { type: 'courier', acceptorId: other, reward: 999 }); // 非我承接 → 不计
+    await insertContract(db, 6, { status: 'finished', price: 8888 }); // 已结算 → 不计
+    await insertContract(db, 7, { type: 'auction', price: 1234 }); // auction → 不计
+    await insertContract(db, 8, { price: null }); // 无价 → 0
+
+    const result = await computeNetWorth(db, CHARACTER_ID);
+
+    expect(result.contractsValue).toBe(5300); // 5000 + 300
+    expect(result.totalValue).toBe(5300);
+  });
+});
+
+describe('computeAccountNetWorth（跨角色合计）', () => {
+  it('分项 = Σ 各角色分项；物品种类与缺价明细跨角色去重', async () => {
+    const db = await setup(1000);
+    const other = 96099997;
+    await db.execute(
+      'INSERT INTO characters (character_id, name, scopes, wallet_balance, added_at) VALUES (?, ?, ?, ?, ?)',
+      [other, '另一角色', 'esi-assets.read_assets.v1', 2000, '2026-09-01T00:00:00Z'],
+    );
+    await insertStats(db, 34, 5);
+    // 角色 A：34 × 10（有价） + 99 × 1（缺价）
+    await insertAsset(db, 1, 34, 10);
+    await insertAsset(db, 2, 99, 1);
+    // 角色 B：34 × 4（同物品，去重后仍算 1 种） + 77 × 1（缺价）
+    await db.execute(
+      `INSERT INTO assets (character_id, item_id, type_id, quantity, location_id, location_flag,
+                           location_type, is_singleton, fetched_at)
+       VALUES (?, ?, ?, ?, 60003760, 'Hangar', 'station', 0, '2026-09-27T00:00:00Z')`,
+      [other, 1, 34, 4],
+    );
+    await db.execute(
+      `INSERT INTO assets (character_id, item_id, type_id, quantity, location_id, location_flag,
+                           location_type, is_singleton, fetched_at)
+       VALUES (?, ?, ?, ?, 60003760, 'Hangar', 'station', 0, '2026-09-27T00:00:00Z')`,
+      [other, 2, 77, 1],
+    );
+    await insertContract(db, 1, { price: 500 }); // 仅角色 A 的合同
+
+    const account = await computeAccountNetWorth(db, [CHARACTER_ID, other]);
+
+    expect(account.characterIds).toEqual([CHARACTER_ID, other]);
+    expect(account.characters).toHaveLength(2);
+    expect(account.assetsValue).toBe(50 + 20); // (10×5) + (4×5)
+    expect(account.walletBalance).toBe(3000);
+    expect(account.contractsValue).toBe(500);
+    expect(account.totalValue).toBe(account.assetsValue + account.walletBalance + account.sellOrdersValue + account.contractsValue);
+    expect(account.distinctTypeCount).toBe(3); // 34 / 99 / 77
+    expect(account.missingTypeIds).toEqual([99, 77]); // 跨角色去重、保持首次出现顺序
+    expect(account.missingPriceTypes).toBe(2);
+  });
+
+  it('空角色列表：全部为 0 且不查库报错', async () => {
+    const db = await setup(0);
+    const account = await computeAccountNetWorth(db, []);
+    expect(account.totalValue).toBe(0);
+    expect(account.distinctTypeCount).toBe(0);
+    expect(account.missingTypeIds).toEqual([]);
+    expect(account.characters).toEqual([]);
+  });
+
+  it('基准透传：regionId 换到另一枢纽后资产估值随之变化', async () => {
+    const db = await setup(0);
+    const amarr = 10000043;
+    await insertAsset(db, 1, 34, 10);
+    await insertStats(db, 34, 5, JITA);
+    await insertStats(db, 34, 9, amarr);
+
+    const jita = await computeAccountNetWorth(db, [CHARACTER_ID], { regionId: JITA });
+    const domain = await computeAccountNetWorth(db, [CHARACTER_ID], { regionId: amarr });
+
+    expect(jita.assetsValue).toBe(50);
+    expect(domain.assetsValue).toBe(90);
   });
 });
 

@@ -1,12 +1,16 @@
 import {
+  TRADE_HUBS,
+  computeAccountNetWorth,
   computeNetWorth,
   getAssetDetails,
   getAssetOverview,
   getCharacterScopeStates,
   getStationNames,
   getTypeNames,
+  listAssetLocationIds,
   listSnapshots,
   writeDailySnapshot,
+  type AccountNetWorth,
   type AssetDetailRow,
   type AssetOverviewRow,
   type NetWorthBreakdown,
@@ -15,8 +19,10 @@ import {
   type ScopeStateSummary,
   type StationNameEntry,
   type TypeNameEntry,
+  type ValuationBasis,
+  type ValuationOptions,
 } from '@eve-suite/core';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { initCoreRuntime } from '../core/runtime';
 import type { CharactersHandle } from './useCharacters';
@@ -27,6 +33,21 @@ export interface AssetsPageProps {
   characters: CharactersHandle;
   sync: PersonalSyncHandle;
 }
+
+/** 五大枢纽的主交易站：作为「净值基准站点」下拉的固定候选（仅在 SDE 有名字时才展示） */
+const HUB_MAIN_STATION_IDS: readonly number[] = [
+  60003760, // 吉他 4-4
+  60008494, // 艾玛
+  60005686, // 赫克
+  60004588, // 伦斯
+  60011866, // 多迪谢
+];
+
+/** 价格口径标签 */
+const BASIS_LABELS: Record<ValuationBasis, string> = {
+  p5_sell: '5% 分位（默认）',
+  best_sell: '最低卖价',
+};
 
 /** 端点中文名（与 PERSONAL_SCOPES 一一对应） */
 const SCOPE_LABELS: Record<PersonalScope, string> = {
@@ -47,29 +68,64 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
   const [overview, setOverview] = useState<AssetOverviewRow[]>([]);
   const [typeNames, setTypeNames] = useState<Map<number, TypeNameEntry>>(new Map());
   const [networth, setNetworth] = useState<NetWorthBreakdown | null>(null);
+  const [account, setAccount] = useState<AccountNetWorth | null>(null);
   const [snapshots, setSnapshots] = useState<NetWorthSnapshot[]>([]);
   const [expandedTypeId, setExpandedTypeId] = useState<number | null>(null);
   const [details, setDetails] = useState<AssetDetailRow[]>([]);
   const [stationNames, setStationNames] = useState<Map<number, StationNameEntry>>(new Map());
+  const [stationOptions, setStationOptions] = useState<Map<number, StationNameEntry>>(new Map());
+  const [showMissing, setShowMissing] = useState(false);
   const [panelMessage, setPanelMessage] = useState('');
 
-  const loadCharacter = useCallback(async (characterId: number) => {
-    const runtime = await initCoreRuntime();
-    const { db } = runtime;
-    const [states, rows, worth, snaps] = await Promise.all([
-      getCharacterScopeStates(db, characterId),
-      getAssetOverview(db, characterId),
-      computeNetWorth(db, characterId),
-      listSnapshots(db, characterId),
-    ]);
-    setScopeStates(states);
-    setOverview(rows);
-    setTypeNames(await getTypeNames(db, rows.map((row) => row.typeId)));
-    setNetworth(worth);
-    setSnapshots(snaps);
-    setExpandedTypeId(null);
-    setDetails([]);
-  }, []);
+  /** 净值估值口径（P5-4）：默认与全站一致（吉他 5% 分位、不过滤离群） */
+  const [regionId, setRegionId] = useState<number>(TRADE_HUBS[0].regionId);
+  const [stationId, setStationId] = useState<number | null>(null);
+  const [basis, setBasis] = useState<ValuationBasis>('p5_sell');
+  const [filterOutliers, setFilterOutliers] = useState(false);
+  const valuationOptions = useMemo<ValuationOptions>(
+    () => ({ regionId, stationId, basis, filterOutliers }),
+    [regionId, stationId, basis, filterOutliers],
+  );
+
+  const loadCharacter = useCallback(
+    async (characterId: number, options: ValuationOptions) => {
+      const runtime = await initCoreRuntime();
+      const { db } = runtime;
+      const ids = characters.characters.map((item) => item.characterId);
+      const scopeIds = ids.length > 0 ? ids : [characterId];
+      const [states, rows, worth, snaps, accountWorth, locations] = await Promise.all([
+        getCharacterScopeStates(db, characterId),
+        getAssetOverview(db, characterId, options),
+        computeNetWorth(db, characterId, options),
+        listSnapshots(db, characterId),
+        computeAccountNetWorth(db, scopeIds, options),
+        listAssetLocationIds(db, scopeIds),
+      ]);
+      setScopeStates(states);
+      setOverview(rows);
+      setTypeNames(await getTypeNames(db, rows.map((row) => row.typeId)));
+      setNetworth(worth);
+      setAccount(accountWorth);
+      setSnapshots(snaps);
+      // 站点候选 = 资产所在站 + 五大枢纽主站（仅保留 SDE 有名字的）
+      setStationOptions(
+        await getStationNames(db, [...new Set([...locations, ...HUB_MAIN_STATION_IDS])]),
+      );
+      setExpandedTypeId(null);
+      setDetails([]);
+    },
+    [characters.characters],
+  );
+
+  const regionLabel = TRADE_HUBS.find((hub) => hub.regionId === regionId)?.nameEn ?? String(regionId);
+
+  const nameOf = useCallback(
+    (typeId: number): string => {
+      const entry = typeNames.get(typeId);
+      return entry === undefined ? `typeID ${typeId}` : entry.nameZh ?? entry.nameEn;
+    },
+    [typeNames],
+  );
 
   // 角色清单就绪后默认选中第一个；选中项消失（如被登出）时回落到第一个
   useEffect(() => {
@@ -86,10 +142,15 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
 
   useEffect(() => {
     if (selectedId === null) return;
-    void loadCharacter(selectedId).catch((error: unknown) =>
+    void loadCharacter(selectedId, valuationOptions).catch((error: unknown) =>
       setPanelMessage(`读取角色数据失败：${error instanceof Error ? error.message : String(error)}`),
     );
-  }, [selectedId, loadCharacter, sync.lastRound]);
+  }, [selectedId, loadCharacter, sync.lastRound, valuationOptions]);
+
+  // 站点归属区域：切换基准区域时清空站点（否则区域不匹配会导致全部缺价）
+  useEffect(() => {
+    setStationId(null);
+  }, [regionId]);
 
   const toggleExpand = useCallback(
     async (typeId: number) => {
@@ -101,7 +162,7 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
       }
       try {
         const runtime = await initCoreRuntime();
-        const rows = await getAssetDetails(runtime.db, selectedId, typeId);
+        const rows = await getAssetDetails(runtime.db, selectedId, typeId, valuationOptions);
         setStationNames(await getStationNames(runtime.db, rows.map((row) => row.locationId)));
         setDetails(rows);
         setExpandedTypeId(typeId);
@@ -109,7 +170,7 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
         setPanelMessage(`读取资产明细失败：${error instanceof Error ? error.message : String(error)}`);
       }
     },
-    [expandedTypeId, selectedId],
+    [expandedTypeId, selectedId, valuationOptions],
   );
 
   const handleSyncNow = useCallback(async () => {
@@ -117,8 +178,8 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
     // 手动同步不走调度器轮次（不产生 sync.lastRound），需在此补齐角色卡刷新，
     // 否则军团 ID / 钱包余额 / 最近同步 会停留在授权那一刻的陈旧值
     await characters.refresh();
-    if (selectedId !== null) await loadCharacter(selectedId);
-  }, [sync, characters.refresh, selectedId, loadCharacter]);
+    if (selectedId !== null) await loadCharacter(selectedId, valuationOptions);
+  }, [sync, characters.refresh, selectedId, loadCharacter, valuationOptions]);
 
   const handleSnapshot = useCallback(async () => {
     if (selectedId === null) return;
@@ -227,13 +288,79 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
         <>
           <div className="panel">
             <div className="panel-head">
-              <h2>净值（估值口径：吉他 5% 分位）</h2>
+              <h2>
+                净值（估值口径：{regionLabel} · {BASIS_LABELS[basis]}
+                {stationId === null ? '' : ' · 站点级'}
+                {filterOutliers ? ' · 已剔除离群' : ''}）
+              </h2>
               <div className="tabs">
                 <button type="button" onClick={() => void handleSnapshot()}>
                   生成今日快照
                 </button>
               </div>
             </div>
+
+            <div className="params">
+              <label>
+                基准区域
+                <select
+                  value={regionId}
+                  onChange={(event) => setRegionId(Number(event.target.value))}
+                >
+                  {TRADE_HUBS.map((hub) => (
+                    <option key={hub.regionId} value={hub.regionId}>
+                      {hub.nameEn}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                基准站点
+                <select
+                  value={stationId ?? ''}
+                  onChange={(event) =>
+                    setStationId(event.target.value === '' ? null : Number(event.target.value))
+                  }
+                >
+                  <option value="">不指定（按区域）</option>
+                  {[...stationOptions.entries()]
+                    .filter(([, entry]) => entry.regionId === regionId)
+                    .map(([id, entry]) => (
+                      <option key={id} value={id}>
+                        {entry.nameZh ?? entry.nameEn}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label>
+                价格口径
+                <select
+                  value={basis}
+                  onChange={(event) => setBasis(event.target.value as ValuationBasis)}
+                >
+                  {(Object.keys(BASIS_LABELS) as ValuationBasis[]).map((key) => (
+                    <option key={key} value={key}>
+                      {BASIS_LABELS[key]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={filterOutliers}
+                  onChange={(event) => setFilterOutliers(event.target.checked)}
+                />
+                剔除离群卖单（10 倍中位数）
+              </label>
+            </div>
+
+            {stationId !== null && (
+              <p className="hint">
+                已指定站点基准：<strong>只按该站订单簿计价，站上无报价的物品计 0（不会回退区域价）</strong>
+                ；站点级/离群过滤会回到订单簿重算，稍慢属正常。
+              </p>
+            )}
 
             {networth === null ? (
               <p className="hint">暂无数据</p>
@@ -242,7 +369,7 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
                 <table className="result">
                   <thead>
                     <tr>
-                      <th>合计净值</th>
+                      <th>当前角色合计净值</th>
                       <th>资产估值</th>
                       <th>钱包余额</th>
                       <th>未成交卖单</th>
@@ -261,9 +388,87 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
                 </table>
                 {networth.missingPriceTypes > 0 && (
                   <p className="hint">
-                    共 {networth.distinctTypeCount} 种物品，其中 {networth.missingPriceTypes} 种在吉他无报价
-                    （已按 0 计，净值偏低）——请先在「行情」页采集枢纽数据。
+                    当前角色共 {networth.distinctTypeCount} 种物品，其中 {networth.missingPriceTypes} 种在
+                    {regionLabel}无报价（已按 0 计，净值偏低）。
+                    <button type="button" onClick={() => setShowMissing((previous) => !previous)}>
+                      {showMissing ? '收起明细' : '展开明细'}
+                    </button>
                   </p>
+                )}
+                {showMissing && networth.missingTypeIds.length > 0 && (
+                  <p className="hint">
+                    缺价物品：{networth.missingTypeIds.map((typeId) => nameOf(typeId)).join('、')}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="panel">
+            <div className="panel-head">
+              <h2>全账号合计（全部已授权角色）</h2>
+              <span className="hint">
+                分项与单角色同口径；<strong>快照始终按默认口径（吉他 5% 分位）写入</strong>，不受上方控件影响
+              </span>
+            </div>
+            {account === null || account.characterIds.length === 0 ? (
+              <p className="hint">暂无角色。</p>
+            ) : (
+              <>
+                <table className="result">
+                  <thead>
+                    <tr>
+                      <th>合计净值</th>
+                      <th>资产估值</th>
+                      <th>钱包余额</th>
+                      <th>未成交卖单</th>
+                      <th>合同</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>{formatIsk(account.totalValue)}</td>
+                      <td>{formatIsk(account.assetsValue)}</td>
+                      <td>{formatIsk(account.walletBalance)}</td>
+                      <td>{formatIsk(account.sellOrdersValue)}</td>
+                      <td>{formatIsk(account.contractsValue)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p className="hint">
+                  {account.characterIds.length} 个角色 · 共 {account.distinctTypeCount} 种物品
+                  {account.missingPriceTypes > 0
+                    ? ` · ${account.missingPriceTypes} 种在${regionLabel}无报价（已按 0 计）`
+                    : ''}
+                </p>
+                {account.characterIds.length > 1 && (
+                  <table className="result">
+                    <thead>
+                      <tr>
+                        <th>角色</th>
+                        <th>合计净值</th>
+                        <th>资产估值</th>
+                        <th>钱包余额</th>
+                        <th>未成交卖单</th>
+                        <th>合同</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {account.characters.map((row) => (
+                        <tr key={row.characterId}>
+                          <td>
+                            {characters.characters.find((item) => item.characterId === row.characterId)
+                              ?.name ?? row.characterId}
+                          </td>
+                          <td>{formatIsk(row.totalValue)}</td>
+                          <td>{formatIsk(row.assetsValue)}</td>
+                          <td>{formatIsk(row.walletBalance)}</td>
+                          <td>{formatIsk(row.sellOrdersValue)}</td>
+                          <td>{formatIsk(row.contractsValue)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 )}
               </>
             )}
@@ -318,7 +523,7 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
                   <tr>
                     <th>物品</th>
                     <th>数量</th>
-                    <th>单价（吉他 5% 分位）</th>
+                    <th>单价（{regionLabel} · {BASIS_LABELS[basis]}）</th>
                     <th>估值</th>
                     <th>地点数</th>
                   </tr>

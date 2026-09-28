@@ -2,7 +2,11 @@ import type { DbAdapter } from '../db/types';
 import { valueItems, type ValuationOptions } from '../engines/valuation';
 import { systemClock, type Clock } from '../esi/clock';
 
-/** 净值分项（contractsValue 恒为 0，合同估值留 P5） */
+/**
+ * 净值分项。
+ *
+ * 合同分项口径（P5-4 轻口径，本地零请求）：见 [computeContractsValue]。
+ */
 export interface NetWorthBreakdown {
   characterId: number;
   totalValue: number;
@@ -11,12 +15,33 @@ export interface NetWorthBreakdown {
   walletBalance: number;
   /** Σ(未成交卖单 volume_remain × price) */
   sellOrdersValue: number;
-  /** 记 0（合同估值留 P5） */
+  /** 合同分项（口径见 `computeContractsValue`） */
   contractsValue: number;
   /** 参与估值的物品种类数 */
   distinctTypeCount: number;
   /** 基准区域无报价的物品种类数——估值偏低提示 */
   missingPriceTypes: number;
+  /** 无报价物品 typeId（去重，按首次出现顺序）；供界面列出具名明细 */
+  missingTypeIds: number[];
+}
+
+/** 跨角色的「全账号」净值合计（分项加总 + 分角色明细） */
+export interface AccountNetWorth {
+  /** 计入合计的角色（按传入顺序） */
+  characterIds: number[];
+  totalValue: number;
+  assetsValue: number;
+  walletBalance: number;
+  sellOrdersValue: number;
+  contractsValue: number;
+  /** 全部角色合计的物品种类数（去重） */
+  distinctTypeCount: number;
+  /** 全部角色合计的无报价物品种类数（去重） */
+  missingPriceTypes: number;
+  /** 全部角色合计的无报价物品 typeId（去重，按首次出现顺序） */
+  missingTypeIds: number[];
+  /** 分角色明细（与 `characterIds` 同序） */
+  characters: NetWorthBreakdown[];
 }
 
 export interface NetWorthSnapshot extends NetWorthBreakdown {
@@ -26,10 +51,37 @@ export interface NetWorthSnapshot extends NetWorthBreakdown {
 }
 
 /**
+ * 合同分项（P5-4 轻口径，**本地零请求 / 零迁移**）：
+ * - 我**发起**且 `outstanding` 的 **item_exchange** → 计 `price`（被托管物品的变现价值）
+ * - 我**承接**且 `outstanding` 的 **courier** → 计 `reward`（待收运费）
+ * - 其余（auction / loan / 已完成 / 已过期）→ 不计
+ * - **排除公司合同**（`for_corporation = 1`）——本项目不跟踪公司资产/钱包，计入会使合计口径不一致
+ *
+ * 局限：**不逐项估值合同内物品**（ESI 合同物品需 `/contracts/{id}/items`，当前未同步）。
+ */
+async function computeContractsValue(db: DbAdapter, characterId: number): Promise<number> {
+  const rows = await db.select<{ issuedValue: number | null; courierValue: number | null }>(
+    `SELECT
+       COALESCE(SUM(CASE WHEN type = 'item_exchange' AND status = 'outstanding'
+                          AND for_corporation = 0 AND issuer_id = ?
+                         THEN COALESCE(price, 0) ELSE 0 END), 0) AS issuedValue,
+       COALESCE(SUM(CASE WHEN type = 'courier' AND status = 'outstanding'
+                          AND for_corporation = 0 AND acceptor_id = ?
+                         THEN COALESCE(reward, 0) ELSE 0 END), 0) AS courierValue
+       FROM contracts
+      WHERE character_id = ?`,
+    [characterId, characterId, characterId],
+  );
+  const row = rows[0];
+  return (row?.issuedValue ?? 0) + (row?.courierValue ?? 0);
+}
+
+/**
  * 计算角色净值（不写库）。
  *
  * 口径：`assets_value` 走估值引擎 [valueItems]（默认吉他 5% 分位，缺失按回退链处理）；
- * 卖单按未成交量的挂单价计；无报价的物品计 0 并计入 `missingPriceTypes`（不抛错、不跳过整表）。
+ * 卖单按未成交量的挂单价计；合同按 [computeContractsValue]；
+ * 无报价的物品计 0 并计入 `missingPriceTypes` / `missingTypeIds`（不抛错、不跳过整表）。
  */
 export async function computeNetWorth(
   db: DbAdapter,
@@ -40,7 +92,8 @@ export async function computeNetWorth(
     `SELECT type_id AS typeId, SUM(quantity) AS quantity
        FROM assets
       WHERE character_id = ?
-      GROUP BY type_id`,
+      GROUP BY type_id
+      ORDER BY type_id`,
     [characterId],
   );
 
@@ -65,7 +118,7 @@ export async function computeNetWorth(
   const assetsValue = valuation.totalValue;
   const walletBalance = walletRows[0]?.walletBalance ?? 0;
   const sellOrdersValue = orderRows[0]?.sellOrdersValue ?? 0;
-  const contractsValue = 0;
+  const contractsValue = await computeContractsValue(db, characterId);
 
   return {
     characterId,
@@ -76,6 +129,62 @@ export async function computeNetWorth(
     contractsValue,
     distinctTypeCount: valuation.distinctTypeCount,
     missingPriceTypes: valuation.missingTypeIds.length,
+    missingTypeIds: valuation.missingTypeIds,
+  };
+}
+
+/**
+ * 跨角色的「全账号」净值合计：分项加总 + 分角色明细。
+ *
+ * 分项与 `computeNetWorth` 完全同口径（估值引擎 / 卖单 / 合同），
+ * 故 `合计各分项 = Σ 各角色同分项` 严格成立。
+ */
+export async function computeAccountNetWorth(
+  db: DbAdapter,
+  characterIds: readonly number[],
+  options: ValuationOptions = {},
+): Promise<AccountNetWorth> {
+  const ids = [...characterIds];
+  const breakdowns: NetWorthBreakdown[] = [];
+  for (const characterId of ids) {
+    breakdowns.push(await computeNetWorth(db, characterId, options));
+  }
+
+  const missingTypeIds: number[] = [];
+  const seen = new Set<number>();
+  for (const breakdown of breakdowns) {
+    for (const typeId of breakdown.missingTypeIds) {
+      if (seen.has(typeId)) continue;
+      seen.add(typeId);
+      missingTypeIds.push(typeId);
+    }
+  }
+
+  // 去重的物品种类数：直接查库（跨角色去重；空角色列表直接为 0）
+  let distinctTypeCount = 0;
+  if (ids.length > 0) {
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = await db.select<{ total: number }>(
+      `SELECT COUNT(DISTINCT type_id) AS total FROM assets WHERE character_id IN (${placeholders})`,
+      ids,
+    );
+    distinctTypeCount = rows[0]?.total ?? 0;
+  }
+
+  const sum = (pick: (breakdown: NetWorthBreakdown) => number): number =>
+    breakdowns.reduce((total, breakdown) => total + pick(breakdown), 0);
+
+  return {
+    characterIds: ids,
+    totalValue: sum((item) => item.totalValue),
+    assetsValue: sum((item) => item.assetsValue),
+    walletBalance: sum((item) => item.walletBalance),
+    sellOrdersValue: sum((item) => item.sellOrdersValue),
+    contractsValue: sum((item) => item.contractsValue),
+    distinctTypeCount,
+    missingPriceTypes: missingTypeIds.length,
+    missingTypeIds,
+    characters: breakdowns,
   };
 }
 
@@ -160,5 +269,6 @@ export async function listSnapshots(
     // 快照行不存这两项统计（按当前资产现算，仅用于展示参考）
     distinctTypeCount: 0,
     missingPriceTypes: 0,
+    missingTypeIds: [],
   }));
 }

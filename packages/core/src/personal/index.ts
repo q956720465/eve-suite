@@ -66,12 +66,13 @@ export {
 } from './repo';
 export type { CharacterSummary, ScopeStateSummary, UpsertCharacterInput } from './repo';
 
-export { computeNetWorth, listSnapshots, writeDailySnapshot } from './networth';
+export { computeAccountNetWorth, computeNetWorth, listSnapshots, writeDailySnapshot } from './networth';
 export type {
+  AccountNetWorth,
   NetWorthBreakdown,
   NetWorthSnapshot,
   WriteSnapshotOptions,
 } from './networth';
 
-export { getAssetDetails, getAssetOverview } from './assets';
+export { getAssetDetails, getAssetOverview, listAssetLocationIds } from './assets';
 export type { AssetDetailRow, AssetOverviewRow } from './assets';

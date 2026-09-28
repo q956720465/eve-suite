@@ -64,6 +64,26 @@ export async function getAssetOverview(
   return overview;
 }
 
+/**
+ * 资产出现过的地点 ID（去重，按 ID 升序）。
+ * 供「净值基准站点」这类下拉做候选：只列真正有资产的站点，选项少且有意义。
+ */
+export async function listAssetLocationIds(
+  db: DbAdapter,
+  characterIds: readonly number[],
+): Promise<number[]> {
+  if (characterIds.length === 0) return [];
+  const placeholders = characterIds.map(() => '?').join(', ');
+  const rows = await db.select<{ locationId: number }>(
+    `SELECT DISTINCT location_id AS locationId
+       FROM assets
+      WHERE character_id IN (${placeholders})
+      ORDER BY location_id`,
+    characterIds,
+  );
+  return rows.map((row) => row.locationId);
+}
+
 /** 某物品的资产明细（逐条，含地点与位置标记） */
 export async function getAssetDetails(
   db: DbAdapter,

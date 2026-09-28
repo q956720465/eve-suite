@@ -177,12 +177,14 @@ export async function getTypeNames(
   return result;
 }
 
-/** 空间站名（批量查询结果，含所在星系） */
+/** 空间站名（批量查询结果，含所在星系与所在区域） */
 export interface StationNameEntry {
   nameEn: string;
   nameZh: string | null;
   systemNameEn: string;
   systemNameZh: string | null;
+  /** 所在区域 ID：供「站点必须属于所选区域」这类联动过滤（如净值基准站点） */
+  regionId: number;
 }
 
 /**
@@ -205,9 +207,11 @@ export async function getStationNames(
       nameZh: string | null;
       systemNameEn: string;
       systemNameZh: string | null;
+      regionId: number;
     }>(
       `SELECT station_id AS stationId, name_en AS nameEn, name_zh AS nameZh,
-              system_name_en AS systemNameEn, system_name_zh AS systemNameZh
+              system_name_en AS systemNameEn, system_name_zh AS systemNameZh,
+              region_id AS regionId
          FROM sde_stations
         WHERE station_id IN (${placeholders})`,
       chunk,
@@ -218,6 +222,7 @@ export async function getStationNames(
         nameZh: row.nameZh,
         systemNameEn: row.systemNameEn,
         systemNameZh: row.systemNameZh,
+        regionId: row.regionId,
       });
     }
   }
