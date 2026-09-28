@@ -73,6 +73,24 @@ export async function insertStats(db: DbAdapter, input: MarketStatsInput): Promi
   );
 }
 
+export interface AssetInput {
+  characterId: number;
+  itemId: number;
+  typeId: number;
+  quantity: number;
+  locationId?: number;
+}
+
+/** 插入一条角色资产（默认吉他 4-4、机库、非蓝图复制品） */
+export async function insertAsset(db: DbAdapter, input: AssetInput): Promise<void> {
+  await db.execute(
+    `INSERT INTO assets (character_id, item_id, type_id, quantity, location_id, location_flag,
+                         location_type, is_singleton, is_blueprint_copy, fetched_at)
+     VALUES (?, ?, ?, ?, ?, 'Hangar', 'station', 0, NULL, '2026-09-27T00:00:00Z')`,
+    [input.characterId, input.itemId, input.typeId, input.quantity, input.locationId ?? JITA_44],
+  );
+}
+
 export interface BlueprintIoInput {
   direction: 'input' | 'output';
   typeId: number;

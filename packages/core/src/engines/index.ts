@@ -30,6 +30,7 @@ export {
   getBlueprintActivities,
   getBlueprintMaterials,
   getBlueprintProducts,
+  getMaxProductionLimit,
   normalizeRuns,
 } from './blueprint';
 export type {
@@ -40,6 +41,15 @@ export type {
   BlueprintMaterialLine,
   BlueprintProduct,
 } from './blueprint';
+
+export { computeInventoryGap, getOwnedQuantities } from './inventory';
+export type {
+  InventoryGapLine,
+  InventoryGapOptions,
+  InventoryGapPrice,
+  InventoryGapResult,
+  InventoryHubSummary,
+} from './inventory';
 
 export { buildLpPortfolio, computeOfferValue, rankLpOffers } from './lp';
 export type {

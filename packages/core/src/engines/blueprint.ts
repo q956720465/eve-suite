@@ -199,7 +199,7 @@ export async function getBlueprintProducts(
 }
 
 /** 单次任务最大流程数（BPC 的 run 上限）；SDE 缺失时为 null */
-async function getMaxProductionLimit(
+export async function getMaxProductionLimit(
   db: DbAdapter,
   blueprintTypeId: number,
 ): Promise<number | null> {
