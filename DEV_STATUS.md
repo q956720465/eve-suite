@@ -380,6 +380,7 @@
 |---|---|---|
 | **P5-1 全域 6 小时层** | ✅ 完成（真机 + 真实 ESI 验收） | 新增迁移 **0007**（`market_global_scan_state` 单行状态表）；`market/global.ts`（`GlobalMarketScanner`）+ `market/global-state.ts`（档位 / 到期判定 / 区域清单 / 状态读写）+ `db/settings.ts`（`settings` 表读写）；行情页新增「全域层 · 跨区快照」区块（档位下拉 / 覆盖区域 / 上次全量完成 / 下次自动扫描 / 本轮进度 / 本轮写入 / 最近错误 / 立即扫描） |
 | **P5-2 跨区价差视图** | ✅ 完成（真实库脚本 11/11 + 真机界面 + 真实 ESI 历史校验验收） | 新顶层页签「价差」；`market/spread.ts`（两段式过滤：SQL 粗筛 + 候选历史校验）+ 19 条用例；`SpreadPage.tsx`（区域范围 / 排序 / 条数上限 / 历史校验降级标注 / 快照新鲜度行） |
+| **P5-2.6 枢纽历史基线预拉** | ✅ 完成（真机 + 真实 ESI 预拉验收；**速率偏差待复测**） | 新增迁移 **0008**（`market_history_backfill_state` 单行状态表）；`market/history-backfill-state.ts`（档位 24h/off、到期判定、门槛筛清单）+ `market/history-backfill.ts`（`HistoryBackfill`：串行逐个 / 匀速节拍 5 req/s / `global` 优先级 / 失败隔离）+ 16 条用例；`refreshTypeHistory` 加可选 `priority`；价差页顶部「历史基线预拉 · 枢纽」面板 |
 | P5-3~ 整合功能 | 未开始 | 库存缺口 / 精确净值补完 / 采矿时薪 / 工业成本闭环 / 提醒系统（托盘 + Webhook）+ Undercut |
 
 **P5-1 实测记录（2026-09-28，真实库副本迁移 + 真实 ESI 两轮全量 + 真机界面）**：
@@ -435,28 +436,57 @@
 - **语义澄清**：`market_stats.sell_volume` 是**在架量**（`volume_remain` 汇总）**非成交量** → 流动性门槛用订单数而非在架量；`market_history_daily` 仅按需覆盖（65 区 × 1.7 万种全量不现实）→ 候选集按需拉取是唯一现实路径
 - 校验请求走 `ondemand` 优先级（低于枢纽层），`refreshTypeHistory` 复用（当日已抓取跳过 + ESI 24h 缓存 → 复看零请求）
 
+**P5-2.6 实测记录（2026-09-28，真实库副本迁移重放 + 真机 + 真实 ESI 预拉）**：
+- 静态：core **350 → 366** 用例全绿（新增 `history-backfill.test.ts` 16 条：清单门槛/排序、档位解析、到期与中断判定、首轮拉取与状态推进、按天幂等、失败隔离、暂停收尾、中断续跑累加、未到期/关闭档/清单空/暂停跳过、匀速节拍 200ms×3）；`tsc --noEmit`（core / ui）与 `ui build` 通过；未动 Rust、未改已发布迁移
+- **迁移 v7 → v8（真实库副本，`VACUUM INTO` 后先回退成 v7 形态再重放）**：`applied=1`、`schemaVersion=8`；逐表行数**完全不变**（`market_orders` 1,551,642 / `market_stats` 211,837 / `market_history_daily` 28,182 / `market_collect_state` 70 / `market_global_scan_state` 1 / `sde_types` 53,060 / `characters` 1 / `assets` 1,495 / `lp_balances` 6 …）；重复执行 `applied=0`
+  - **注意**：真实运行库在本次验收开始前**已被 HMR 自动迁移到 v8**（改 core 源码触发 Vite 热更新 → `initDatabase()` 重跑迁移，见踩坑 #35），故改用副本「先回退成 v7 再重放」的方式验证迁移过程本身
+- **真机 + 真实 ESI 预拉（computer-use）**：
+  - 价差页顶部面板渲染正常；**预拉清单实测 36,533 条**（5 枢纽，`sell_orders ≥ 5 OR buy_orders ≥ 5`）
+  - 档位默认「每日一次（默认）」（24h）；**应用启动即自动开跑**（catch-up：`lastFullOkAt` 为空 → 到期）
+  - 真实拉取生效：`market_history_daily` 28,182 → **33,988 行**、pair 75 → 86，`fetched_at` 为当日，`last_error` 为空
+  - 切「关闭（仅按需校验）」→「下次自动预拉 = **已关闭**」+ 文案「历史预拉已关闭：不再自动预拉，已拉取的历史保留」；**重启应用后档位仍为关闭**（`settings` 持久化）且不自动跑（按钮为可用的「立即预拉」）
+  - 切回 24h 后点「立即预拉」→ 按钮转「预拉中…」（禁用）→ **续跑启动**；中途停止应用（模拟中断）→ 重启后 `lastStartedAt` 保留、`lastFinishedAt` 为空 → 判为中断并自动续跑
+  - combo 交互沿用踩坑 #32：`set_value` 无效，须 `expand` + 对 `list-item` 发 `perform_action{action:"select"}`，并回读 `val=` 验证
+- **观察到的偏差（重要，待复测）**：
+  - **实测速率远低于设计目标 5 req/s**：45 秒仅新增 3 个 pair、数分钟累计约 11 个 pair。原因是**预拉写事务与枢纽层首采（近 90 万行整区替换）争抢写锁**——`global` 优先级只能让请求排队，挡不住数据库层的写锁等待（DB-1 的退避重试兜住了失败，但代价是等待）
+  - 观测窗口内库体积 438.6 MB → 571.1 MB（其中含枢纽首采的大量写入，不能单独归因于预拉）
+  - **完整一轮耗时未实测**（预计显著超出方案估算的 1.9 小时）。待枢纽采集进入稳态后复测；若确认过慢，备选：预拉写入改用更小批次 + 更长间隔，或限定在枢纽轮次间隙执行
+- **规模偏差（需你决策）**：方案 D2 从「每区 Top 1000（5,000 条）」改为「门槛筛（36,533 条）」后，**存储与耗时为原估的 7.3 倍**——库体积将从 ~120MB 量级升到 **GB 级**（按每 pair 约 390 行外推，`market_history_daily` 最终约 1,400 万行）。改 D2 当时只同步了耗时、未同步存储影响，属本次疏漏
+
+**P5-2.6 口径（已定，经用户确认）**：
+- **区域 = 5 枢纽**；**物品 = `sell_orders >= 5 OR buy_orders >= 5`（OR 口径，不做排序截断）**
+  - 为什么不用「按订单数降序取 Top N」：门槛线（订单数 ≥5）很低，够格物品有 13,959 个，而排到第 1000 名时阈值早已远高于 5 → 门槛区间被整段切掉（实测 Top 1000 只覆盖 20.7%，Top 1000 之外还剩 11,073 个双门槛物品）
+- **周期 24h**：ESI 日线一天只新增 1 天，端点自身 `Expires` 到次日；更高频拿不到新数据。档位 `'24h' | 'off'`，默认开启
+- **优先级 `global`**（最低）+ **匀速节拍 5 req/s**：令牌桶 10 req/s 全局共享（枢纽层实测占 ~3），预拉只借一部分并为写锁争用留缓冲
+- **串行逐个提交**：调度器每次 `run()` 都会对整个队列重排（O(n log n)），上万条一次性入队会拖住渲染进程
+- **零水位表**：`refreshTypeHistory` 内部的「当日已抓取」判定（`market_history_daily.fetched_at`）天然提供幂等与断点续跑，故只新增一张整轮状态表（0008），不需要进度水位列
+- **不强制重拉当天已抓取的 pair**（`force` 只忽略档位到期判定）：日线当天不会变，重拉纯耗流量与写事务
+- 参考口径：**预拉是体验优化而非必需**——按需校验对 ESI 毫无压力（实测 `X-Esi-Error-Limit-Remain: 100`，history 端点**未启用** `X-Ratelimit` 限流，正常 200 不计错误预算），瓶颈只是「点一次等 ~70 秒」
+
 ## 数据库现状
 
-- schema 版本：**v7**（v1 settings + v2 SDE 11 表 + v3 行情 7 表 + v4 个人数据 10 表 + v5 LP 商店 3 表 + v6 类型材料 1 表 + v7 全域扫描状态 1 表）
-- 迁移文件：`0001-settings` `0002-sde-tables` `0003-market-tables` `0004-personal-tables` `0005-lp-tables` `0006-type-materials` `0007-market-global`（**已发布，禁止修改，只能新增**）
+- schema 版本：**v8**（v1 settings + v2 SDE 11 表 + v3 行情 7 表 + v4 个人数据 10 表 + v5 LP 商店 3 表 + v6 类型材料 1 表 + v7 全域扫描状态 1 表 + v8 历史预拉状态 1 表）
+- 迁移文件：`0001-settings` `0002-sde-tables` `0003-market-tables` `0004-personal-tables` `0005-lp-tables` `0006-type-materials` `0007-market-global` `0008-history-backfill`（**已发布，禁止修改，只能新增**）
+- v8 表：`market_history_backfill_state`（单行，主键 `id = 1` CHECK；存整轮预拉锚点 / 是否全量成功 / 待重试时刻 / 清单计数 pairs_total·ok·skipped·failed / days_written / elapsed_ms）；档位存 `settings` 的 `market.history.tier`
 - v7 表：`market_global_scan_state`（单行，主键 `id = 1` CHECK；存整轮扫描锚点 / 是否全量成功 / 待重试时刻 / 区域计数 / 请求与写入计数）；档位本身存 `settings` 的 `market.global.tier`
 - v5 LP 表：`lp_offers`（主键 `(corporation_id, offer_id)`）`lp_offer_items` `lp_store_state`；真实库副本 v4→v5 迁移实测通过（行数不变）
-- **运行库已是 v7**（2026-09-28 实测：v4 → v6 一次性应用 2 个迁移；P5-1 期间再自动应用 0007 → v7，界面显示「就绪 · schema v7 · 本次应用 0 个迁移」）
+- **运行库已是 v8**（2026-09-28 实测：v4 → v6 一次性应用 2 个迁移；P5-1 期间自动应用 0007 → v7；P5-2.6 期间自动应用 0008 → v8，界面显示「就绪 · schema v8 · 本次应用 0 个迁移」）
 - v4 个人数据表：`characters` `assets` `wallet_journal` `my_orders` `contracts` `industry_jobs` `mining_ledger` `lp_balances` `networth_snapshots` `personal_sync_state`（字段按官方 **OpenAPI 3.1** 逐端点核对）
 - 真实运行库升级实测：v3 → v4 应用 1 个迁移，`market_orders` 890,552 行与 `sde_types` 53,060 行**行数不变**，10 张新表就位，库内 `idx_` 索引 28 个
 - 运行库位置：`%APPDATA%\com.eve-suite.desktop\eve-suite.db`（WAL）
 - SDE 缓存：`%APPDATA%\com.eve-suite.desktop\sde-cache\`（**12 个 JSONL，约 270MB**；P4-4 起含 `typeMaterials.jsonl`，`types.jsonl` 单独约 108MB）
 - 实测入库（SDE build 3542233）：types 53,060 / stations 5,210 / blueprints 5,082 / 配方材料 42,830 / **类型材料 47,080**（9,545 个类型有精炼映射；可精炼矿石 440 种）
 - 实测采集（真实行情）：**全库 1,551,331 条订单 = 5 枢纽 891,282 条**（伏尔戈 404,558 / 多美 182,244 / 美特伯里斯 119,523 / 西玛特尔 70,557 / 金纳泽 114,642）**+ 全域层 65 区 660,049 条**（54 个非枢纽区有订单，其余 11 个经 ESI 直读确认零订单）；`market_collect_state` 覆盖 **70** 区域；聚合出约 21.2 万条 market_stats（P5-2 验收实测 211,832 行，此前「约 8 万」为枢纽层时期旧值）
-- 测试：core **350 用例全绿**（37 个文件；P4-1 新增 24、P4-2 新增 21、P4-3 新增 19、P4-4 新增 14、P4-5-1 新增 4、**DB-1 新增 7**、**P5-1 新增 23**、**P5-2 新增 19**）；Rust **16 用例全绿**（另有 1 个 `#[ignore]` 真钥匙串往返自检，用 `cargo test -- --ignored --nocapture` 手动跑）
-- UI：`pnpm --filter @eve-suite/ui build` 通过（tsc + vite）；P3-8 **界面五步验收全部通过**（①立即同步 ②切页签不中断 ③暂停/恢复 ④生成今日快照 ⑤登出清除 + 二次授权 + 重新同步）；P4-1 更新资产页口径文案并**做了真机界面复核**（净值卡 / 资产表前 4 行 / 展开明细与库内直算逐项一致，见 P4-1 实测记录）；**P4-5-2 蓝图成本面板真机验收通过**（首屏 / 蓝图价 / runs-ME-TE / 803 多产出 / 37011 无产出行 / 活动 / 区域 8 项，与只读基准逐项一致，见 P4-5-2 实测记录）；**P4-5-3 LP 比价面板真机验收通过**（组合 6 行与排名前 8 行逐项一致、force 刷新、区域切换、24h 缓存复用，见 P4-5-3 实测记录）；**P4-5-4 算例对照面板真机验收通过**（三张卡：蓝图全零误差 / LP 固定量零误差且价格类标注漂移 / 矿石零误差，见 P4-5-4 实测记录）；**P5-1 全域层面板真机验收通过**（档位五档可切换并持久化、暂停区域边界收尾、恢复从第 12 区续扫、catch-up 自动触发、关闭档零请求、表内数值与库内直读一致，见 P5-1 实测记录）；**P5-2 价差页真机验收通过**（页签就位、Top1 与脚本一致、快照新鲜度行、枢纽切换、历史校验真实 ESI 拉取并降级标注，见 P5-2 实测记录）
+- 实测日线历史（P5-2.6 预拉进行中）：`market_history_daily` **28,182 → 33,988 行**（5 枢纽门槛筛清单 **36,533 条**，大件刚起步）；运行库体积（含 WAL）约 **571 MB**；按每 pair 约 390 行外推，全量预拉完成后约 **1,400 万行 / GB 级**（详见「P5-2.6 实测记录」的规模偏差）
+- 测试：core **366 用例全绿**（38 个文件；P4-1 新增 24、P4-2 新增 21、P4-3 新增 19、P4-4 新增 14、P4-5-1 新增 4、**DB-1 新增 7**、**P5-1 新增 23**、**P5-2 新增 19**、**P5-2.6 新增 16**）；Rust **16 用例全绿**（另有 1 个 `#[ignore]` 真钥匙串往返自检，用 `cargo test -- --ignored --nocapture` 手动跑）
+- UI：`pnpm --filter @eve-suite/ui build` 通过（tsc + vite）；P3-8 **界面五步验收全部通过**（①立即同步 ②切页签不中断 ③暂停/恢复 ④生成今日快照 ⑤登出清除 + 二次授权 + 重新同步）；P4-1 更新资产页口径文案并**做了真机界面复核**（净值卡 / 资产表前 4 行 / 展开明细与库内直算逐项一致，见 P4-1 实测记录）；**P4-5-2 蓝图成本面板真机验收通过**（首屏 / 蓝图价 / runs-ME-TE / 803 多产出 / 37011 无产出行 / 活动 / 区域 8 项，与只读基准逐项一致，见 P4-5-2 实测记录）；**P4-5-3 LP 比价面板真机验收通过**（组合 6 行与排名前 8 行逐项一致、force 刷新、区域切换、24h 缓存复用，见 P4-5-3 实测记录）；**P4-5-4 算例对照面板真机验收通过**（三张卡：蓝图全零误差 / LP 固定量零误差且价格类标注漂移 / 矿石零误差，见 P4-5-4 实测记录）；**P5-1 全域层面板真机验收通过**（档位五档可切换并持久化、暂停区域边界收尾、恢复从第 12 区续扫、catch-up 自动触发、关闭档零请求、表内数值与库内直读一致，见 P5-1 实测记录）；**P5-2 价差页真机验收通过**（页签就位、Top1 与脚本一致、快照新鲜度行、枢纽切换、历史校验真实 ESI 拉取并降级标注，见 P5-2 实测记录）；**P5-2.6 预拉面板真机验收通过**（清单 36,533 条、默认 24h、启动即自动预拉、off 档「已关闭」+ 重启后持久、切回 24h 后立即预拉续跑、真实 ESI 拉取入库，见 P5-2.6 实测记录）
 - P4-1 / P4-2 **未新增迁移**（当时 schema 仍 v4）；**P4-3 新增迁移 0005**（LP 商店 3 表）、**P4-4 新增迁移 0006**（类型材料 1 表，schema → v6）：估值/蓝图引擎只读既有 `market_stats` / `market_orders` / `sde_blueprints*`，LP 引擎只读 `lp_*` 与 `lp_balances`，精炼引擎只读 `sde_type_materials` / `sde_types` / `sde_groups`
 - P3-8 收尾后的库态（登出清空 → 二次授权 → 重新同步恢复）：`characters` 1 / `assets` 1495 / `wallet_journal` 2 / `lp_balances` 6 / `networth_snapshots` 1 / 水位 8 条 / `personal:` ETag 8 条
-- 机密存储：OAuth 刷新令牌存**系统钥匙串**（服务名 `com.eve-suite.desktop`），**数据库零令牌字段**（v7 亦不含任何令牌列；LP 商店与全域行情均为公共数据，无需授权）
+- 机密存储：OAuth 刷新令牌存**系统钥匙串**（服务名 `com.eve-suite.desktop`），**数据库零令牌字段**（v8 亦不含任何令牌列；LP 商店、全域行情与历史预拉均为公共数据，无需授权）
 
 ## 下一步
 
-1. **P4 + P5-1 + P5-2 已完成**（四大引擎 + 计算器页 4 面板 + 全域 6 小时层 + 跨区价差视图）。**下一项 = P5-3：库存缺口分析**；其后依次建议：P5-4 精确净值补完 → P5-5 采矿时薪 → P5-6 工业成本闭环（含 LP BPC 产出估值待办）→ P5-7 提醒系统（托盘 + Webhook）+ Undercut。**开工前先出「任务清单 + 验收清单」交用户确认**。
+1. **P4 + P5-1 + P5-2 + P5-2.6 已完成**（四大引擎 + 计算器页 4 面板 + 全域 6 小时层 + 跨区价差视图 + 枢纽历史预拉）。**下一项 = P5-3：库存缺口分析**；其后依次建议：P5-4 精确净值补完 → P5-5 采矿时薪 → P5-6 工业成本闭环（含 LP BPC 产出估值待办）→ P5-7 提醒系统（托盘 + Webhook）+ Undercut。**开工前先出「任务清单 + 验收清单」交用户确认**。
 2. **待推送**：本地有多个提交未推送（起点 `9130776` 起累积）；推送时机由用户掌控（推送后 CI 才会跑）
 3. 已知待办（非阻塞；凡涉及改动已有代码，均需先出方案并确认）：
    - ~~**P2 行情采集未用共享调度器**~~ **已统一（2026-09-28，P5-1-0）**：`useMarketCollector` 改为取 `initCoreRuntime()` 的共享 db / client / scheduler，枢纽层与全域层共用同一优先级队列、「让路」生效；仍未做的是「全域层与个人数据同步是否再分层限速」
@@ -469,6 +499,8 @@
    - **枢纽区是否也纳入全域轮次**：本阶段按「方案 A」排除 5 枢纽（由 5 分钟层维护）。若将来希望「枢纽层单独关闭时全域层仍能覆盖全部 70 区」，需另开方案（会让全域轮次请求量翻倍）
    - **`computeMarketStats` 未过滤 `min_volume > 1` 订单（P5-2 调研新发现）**：`market_orders.min_volume` 已入库但聚合未用 → `best_sell` 可能被「整批大单」钓鱼污染。本期不动已验收代码，价差视图靠订单数 ≥5 + p5 分位兜底；若要在聚合层修复，属 P2 采集口径变更，**需先出方案并确认**
    - **价差视图二期候选（P5-2 评审时记录，均未承诺）**：订单簿深度走量 / 现实捕获份额（避免「价差大但吃不下」）→ 留 P5-6 工业成本闭环一并考虑；库存天数口径 → 同期二期；当前「近 7 天成交天数」已覆盖流动性主风险
+   - **P5-2.6 预拉速率（待复测）**：实测速率远低于设计的 5 req/s，瓶颈是**预拉写事务与枢纽整区替换争抢写锁**（优先级管不到数据库层）。需在枢纽采集稳态后复测完整一轮耗时；若确认过慢，备选：更小写入批次 + 更长间隔，或限定只在枢纽轮次间隙跑
+   - **P5-2.6 预拉规模（待决策）**：清单实测 **36,533 条**（OR 门槛口径）→ `market_history_daily` 终将达 ~1,400 万行 / **GB 级库**（相对方案初稿的 Top 1000 口径放大 7.3 倍）。若要收窄，可改用「双门槛 AND」= 13,959 条（约 -62%），代价是「单侧够格」的候选回落按需校验
 
 ## 踩坑备忘（重要，勿重蹈）
 
@@ -572,6 +604,12 @@
    - 连带结论：任何**用 HMR 期间的观测量**得出的性能结论都不可信（本次「10 分钟只推进 1 区」就混入了这个干扰）——性能结论必须在**干净重启后的单实例**上复测。
 34. **【P5-2 实测】dev 应用运行中严禁再起第二个 `pnpm tauri dev`——新实例失败退出，还可能连带带走原实例**：端口 1420 被占导致第二个实例启动失败（退出码非 0），且原实例（pid 2472）随后也消失了（`No window found for pid`），疑似子进程组被连带清理。对策：**起 dev 前先确认已有实例**（`Get-NetTCPConnection -LocalPort 1420` 或 `list_apps`）；需要重启时先干净停旧再起新，绝不并行起两个。
    - 连带经验：UIA 树观察的 element_id 带有 diff 上下文，**跨较长时间或界面大改后必须 `disableDiff: true` 重取全量树**再取 id（本次点了过期 id 的「价差」页签未生效，重取后成功）；UIA 树对长表格有**深度截断**（树里 32 行 vs 候选 50 行），行数级断言不要依赖 UIA 树，改用 DB 直查。
+35. **【P5-2.6 实测】改 `packages/core/src/**` 也会触发 Vite HMR → `initDatabase()` 自动把新迁移应用到真实库**：写迁移文件期间 dev 应用仍在运行，HMR 让 `App` 重挂载 → `initDatabase()` 重跑 → 新迁移（0008）在**验收之前**就落到了真实运行库（schema 变 v8），导致原本「先在副本上验证 v7→v8」的计划失效（`applied=0`）。
+   - 对策：**做需要干净库态的验收前，先停掉 dev 应用**（本次已因踩坑 #33 停过一次，但又在其后改动 core 源码期间暴露）；若已发生，用副本「先回退成旧形态（DROP 新表 + DELETE `schema_migrations` 版本行）再重放」验证迁移过程本身。
+   - 附带确认：HMR 自动迁移本身是**安全**的（迁移幂等、单事务、失败回滚），问题只在打乱验证顺序。
+36. **【P5-2.6 实测】后台批量写任务的真实瓶颈是「写锁争用」，不是请求优先级**：预拉设计为 5 req/s + `global` 最低优先级，实测却慢到 45 秒仅 3 个 pair（预期 ~225）。原因是它每个 pair 都要跑一次 `DELETE + INSERT(~400 行)` 写事务，与枢纽层的整区替换（伏尔戈约 40 万行）**争抢 SQLite 写锁**——请求优先级只能让请求排队，管不到数据库层；DB-1 的退避重试保证不失败，但代价是长时间等待。
+   - 对策方向（未实施）：后台批量任务若要真正「不打扰」前台采集，需要**在写入侧做节流**（更小批次 + 更长间隔），或改由「枢纽轮次收尾后的空档」驱动，而不是只靠请求优先级。
+   - 通用教训：**「让路」在请求层与数据库层是两件事**。凡是有大量写事务的后台任务，评估影响时必须同时看写锁，而不是只看请求队列。
 
 ## 关键文件地图
 
@@ -597,6 +635,8 @@
 | 系统钥匙串（Rust） | `src-tauri/src/secrets.rs` |
 | 行情采集 / 统计 / 按需 / 监视 | `packages/core/src/market/` |
 | **跨区价差（P5-2）** | `packages/core/src/market/spread.ts`（`rankCrossRegionSpreads` SQL 粗筛 / `judgeSpreadHistory` + `validateSpreadHistory` 历史校验 / `getSpreadFreshness`）；UI 页 `packages/ui/src/market/SpreadPage.tsx` |
+| **历史基线预拉（P5-2.6）** | `packages/core/src/market/history-backfill-state.ts`（档位 24h/off、到期与中断判定、门槛筛清单 list/count、状态读写）+ `market/history-backfill.ts`（`HistoryBackfill`：串行逐个 / 匀速节拍 5 req/s / `global` 优先级 / 失败隔离 / 进度回调）；UI：`packages/ui/src/market/useHistoryBackfill.ts`（App 级 hook）+ `HistoryBackfillPanel.tsx`（价差页顶部区块） |
+| 迁移 0008（历史预拉状态） | `packages/core/src/db/migrations/0008-history-backfill.ts` |
 | **全域层扫描器（P5-1）** | `packages/core/src/market/global.ts`（`GlobalMarketScanner`：整区替换 / 断点续扫 / 让路=优先级 / 失败隔离 / 暂停） |
 | **全域层档位与状态（P5-1）** | `packages/core/src/market/global-state.ts`（五档、到期与 catch-up、单行状态读写、区域清单 70/65） |
 | **应用设置读写（P5-1）** | `packages/core/src/db/settings.ts`（`readSetting` / `writeSetting`，`settings` 键值表） |
@@ -638,6 +678,7 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 - `%TEMP%\eve-verify-a7.cjs` —— **A7 用（第三方口径对照）**：对指定 type 列表同时按「订单数插值 5% 分位」（core 口径）与「成交量加权 5% 分位」（ISK.GG/Fuzzwork 口径）复算，便于与 Fuzzwork 聚合接口逐项比对
 - `%TEMP%\eve-verify-p51.cjs` —— **P5-1 用（全域层）**：非枢纽区域数与订单数 Top5 / 区域水位行数 / `market_stats` 与从 `market_orders` 手算的聚合逐项比对（内部一致性）/ 整区 `order_id` 集合与 ESI 直读比对（外部一致性，输出 onlyDb / onlyEsi）/ 零订单区域向 ESI 抽查
 - `%TEMP%\eve-verify-p52.cjs` —— **P5-2 用（跨区价差）**：与 core 同口径 SQL 复算 Top50（含 Top1 独立复算 spreadIsk/rate/iskPerM3）/ 朴素对照组（best 价无门槛，验证钓鱼单剔除）/ 价差率上限与买价 ≥1 ISK 断言 / ISK/m³ 排序 / 枢纽模式 / 快照新鲜度，11 项断言
+- `%TEMP%\eve-check-backfill.cjs` —— **P5-2.6 用（历史预拉）**：只读快照 `market_history_daily` 总行数 / 去重 pair 数 / 今日已抓取 pair 数 / 库体积（含 WAL）/ `market_history_backfill_state` 全字段，用于观察预拉进度与速率（改回带 `setTimeout` 的两点采样即可测增量）
 - 运行：`node "$env:TEMP\eve-verify-p41.cjs"`（应用运行中亦可）
 - **注意（P3-9 实测修正）**：此前「WAL 只读无冲突」的说法不严谨——脚本当时是**读写打开**（`new DatabaseSync(path)` 默认读写），与应用的写事务并发时曾导致该轮同步 `database is locked`（`SQLITE_BUSY`）整轮失败；现已改为 **`readOnly: true` 打开**，并在同步进行中并发 4 次未复现。**仍建议避开同步写入窗口运行**（正在同步时先别跑）
 - 注意：`node:sqlite` 是实验特性，会打印 ExperimentalWarning，可忽略
@@ -750,4 +791,28 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 - 应用**正在运行**（`pnpm tauri dev` 后台 job `job-46438c56315d41498a6329f257b3aa83`，`eve-suite.exe` pid **54532**，端口 1420，5 枢纽采集中、全域档 6h），需停则 `StopCommand`
 - 核验脚本：`%TEMP%\eve-verify-p52.cjs`（跨区价差只读核验，11 项断言）
 - 下一步：P5-3 库存缺口分析（开工前先出「任务清单 + 验收清单」交用户确认）
+
+## 会话纪要（2026-09-28 · 晚二：P5-2.6 枢纽历史基线预拉）
+
+> 同上：仅供追溯，权威事实以「## P5 进度」为准。
+
+**该会话完成事项**
+
+| # | 事项 | 结果 | 提交 |
+|---|---|---|---|
+| 1 | 用户逐层收窄预拉范围（全量 70 区 → 全量 5 枢纽 → 少数枢纽），并以「按需拉取 ESI 够不够用」做对比 | 通过（实测 history 端点**无限流**、错误预算常满） | — |
+| 2 | **实测推翻初稿 D2**：「按订单数降序取 Top N」只覆盖双门槛物品 **20.7%** → 改为 **OR 门槛筛**（36,533 条） | 通过 | 见下 |
+| 3 | **B-1** 迁移 0008（`market_history_backfill_state`）+ **B-2** 档位/到期/清单/状态 + **B-3** `HistoryBackfill` 扫描器 + **B-4** `refreshTypeHistory` 加可选 `priority` | 通过 | 见下 |
+| 4 | **B-5** 导出 + **B-6** 16 条用例（core **350 → 366** 全绿） | 通过 | 见下 |
+| 5 | **B-7/B-8/B-9** UI：`useHistoryBackfill`（App 级）+ `HistoryBackfillPanel`（价差页顶部）+ 挂载 | 通过 | 见下 |
+| 6 | **B-10** 真实验收：副本 v7→v8 重放、真机（面板/档位/持久化/续跑）、真实 ESI 预拉 | 通过（**速率偏差待复测**） | 见下 |
+
+**关键验收证据**：完整记录见「## P5 进度」下的「P5-2.6 实测记录」「P5-2.6 口径」，以及踩坑 #35（HMR 自动迁移）、#36（写锁争用才是后台写任务的瓶颈）。
+
+**该会话结束时的仓库 / 环境状态**
+
+- 工作区改动：新增 `packages/core/src/db/migrations/0008-history-backfill.ts`、`packages/core/src/market/{history-backfill-state.ts,history-backfill.ts}`、`packages/core/test/market/history-backfill.test.ts`、`packages/ui/src/market/{useHistoryBackfill.ts,HistoryBackfillPanel.tsx}`；修改 `packages/core/src/db/migrations/index.ts`、`packages/core/src/market/{index.ts,on-demand.ts}`、`packages/ui/src/{App.tsx,market/SpreadPage.tsx}`、`DEV_STATUS.md`；`main` 领先 `origin/main`，**未推送**
+- 应用**已停止**（验收完成后主动 `StopCommand`）；真实运行库 schema **v8**（`market_history_backfill_state` 就位）
+- 核验脚本：`%TEMP%\eve-check-backfill.cjs`（预拉进度只读快照）；临时用例 `packages/core/test/tmp-real-db-migration.test.ts` 已删除
+- 遗留（均记入「## 下一步」第 3 条）：预拉完整一轮未跑完（速率受写锁争用，待稳态复测）、清单规模放大 7.3 倍（GB 级库，待决策是否收窄）
 
