@@ -383,7 +383,7 @@
 | **P5-2 跨区价差视图** | ✅ 完成（真实库脚本 11/11 + 真机界面 + 真实 ESI 历史校验验收） | 新顶层页签「价差」；`market/spread.ts`（两段式过滤：SQL 粗筛 + 候选历史校验）+ 19 条用例；`SpreadPage.tsx`（区域范围 / 排序 / 条数上限 / 历史校验降级标注 / 快照新鲜度行） |
 | **P5-2.6 枢纽历史基线预拉** | ✅ 完成（真机 + 真实 ESI 预拉验收；**速率偏差待复测**） | 新增迁移 **0008**（`market_history_backfill_state` 单行状态表）；`market/history-backfill-state.ts`（档位 24h/off、到期判定、门槛筛清单）+ `market/history-backfill.ts`（`HistoryBackfill`：串行逐个 / 匀速节拍 5 req/s / `global` 优先级 / 失败隔离）+ 16 条用例；`refreshTypeHistory` 加可选 `priority`；价差页顶部「历史基线预拉 · 枢纽」面板 |
 | **P5-2.7 预拉写入优化** | ✅ 完成（真机验证窗口裁剪） | 改 `refreshTypeHistory`：**增量写入**（只写 `>= 本地最新日期` 的行）+ **保留窗口 90 天**（`HISTORY_RETENTION_DAYS`）+ per-pair 裁剪；`HistoryBackfill` 轮次开始/收尾各做一次**全局裁剪**（覆盖被跳过的 pair）；新增 7 条用例（**373** 全绿） |
-| **P5-2.8 历史数据全量初始化** | ✅ 完成（真机 + 真实 ESI 完整一轮验收） | 迁移 **0009**（`market_history_daily(date)` 索引）；保留期 **90 → 400 天**；新增 `market/history-init.ts`（`HistoryInitializer`：8 路并发拉 + 单写者合批串行写 + 本轮锚点续跑 + 失败隔离 + 取消）；**删除** `HistoryBackfill` 类（取消日常 24h 轮次）；UI 新面板 `HistoryInitPanel.tsx` + `useHistoryInit.ts`（确认弹窗 / 进度 / 取消 / 独占编排 / 启动裁剪 / WAL checkpoint / VACUUM）；`RequestScheduler.applyLimits`；新增 11 条用例（**373** 全绿） |
+| **P5-2.8 历史数据全量初始化** | ✅ 完成（真机 + 真实 ESI 完整一轮 + 修复复跑验收） | 迁移 **0009**（`market_history_daily(date)` 索引）；保留期 **90 → 400 天**；新增 `market/history-init.ts`（`HistoryInitializer`：8 路并发拉 + 单写者合批串行写 + 本轮锚点续跑 + 失败隔离 + 取消）；**删除** `HistoryBackfill` 类（取消日常 24h 轮次）；UI 新面板 `HistoryInitPanel.tsx` + `useHistoryInit.ts`（确认弹窗 / 进度 / 取消 / 独占编排 / 启动裁剪 / WAL checkpoint / VACUUM）；`RequestScheduler.applyLimits`；新增 **12** 条用例（**374** 全绿）；真机修复 **4** 处：ETag 304 阻断补满 / 续跑耗时含空闲间隔 / VACUUM 后 WAL 未截断 / **404+400「无可用历史」误判为失败** |
 | P5-3~ 整合功能 | 未开始 | 库存缺口 / 精确净值补完 / 采矿时薪 / 工业成本闭环 / 提醒系统（托盘 + Webhook）+ Undercut |
 
 **P5-1 实测记录（2026-09-28，真实库副本迁移 + 真实 ESI 两轮全量 + 真机界面）**：
@@ -496,6 +496,8 @@
   1. **ETag 304 阻断补满**：初始化原本带缓存 ETag 发条件请求 → ESI 回 **304**（响应体未变）→ 拿不到 body → **90 天窗口永远补不满到 400**。改为初始化**不发条件请求**（返回的 ETag 仍写入缓存，供按需校验继续复用 304）
   2. **续跑耗时含空闲间隔**：原按「本轮锚点」算 `elapsed`（锚点可跨会话，实测错显 **10187 秒**）；改为**累计各段活动耗时**（本次实测 2,926 秒，正确）
   3. **VACUUM 后未 checkpoint**：VACUUM 会把整库重写进 WAL（实测 WAL 涨到 **1461 MB**）；已补收尾 `wal_checkpoint(TRUNCATE)`
+  4. **把「该区无可用历史」误判为失败**：ESI 对**类型不存在**返回 **404 `Type not found!`**、对**类型不可交易（如蓝图）**返回 **400 `Type not tradable on market!`** —— 都是确定性、不可重试的结果。原实现把它们计入 `pairsFailed` → **`lastFullOkAt` 永不推进**（首轮 353 条），面板长期显示「最近错误」。改为两者都计入「已处理成功」，并在汇总单列 `pairsEmpty`（界面显示「其中 N 条该区无可用历史」）
+- **修复后复跑验证（同日）**：`pairs_failed = **0**`、**`last_full_ok_at` 已推进**、`retry_due_at` 清空、`last_error` 为空；本轮 7,727 条更新 / 28,818 条跳过 / 374,040 行 / **592 秒**；面板「上次完成」显示完成时刻、无错误
 
 **P5-2.8 口径（已定，经用户确认）**：
 - **仅手动触发 + 确认弹窗**；**取消日常 24h 自动轮次**（`HistoryBackfill` 类删除），日常新鲜度由价差页**按需校验**维持；tier/状态纯函数保留在 core（供状态展示与中断判据）
@@ -504,6 +506,8 @@
 - **独占编排**：轮级暂停采集与个人同步 → 等在途轮次收尾（上限 5 分钟）→ `applyLimits(13 req/s / burst 40 / maxConcurrent 8)` → 结束后**还原 10/4 并恢复原状态**；**绝不用 `RequestScheduler.pause()`**（踩坑 #30）
 - **续跑判据**：`fetched_at >= 本轮开始时刻`（与「窗口是否已满」解耦，避免 ESI 约 400 天与本项目 cutoff 的微小差异导致「每次续跑全量重拉」）**或**「当日 + 窗口已满」（同日重跑幂等）；**不新增迁移**（复用 0008 状态表，schema 到 v9 只因 0009 加索引）
 - **写入策略**：窗口不足（`MIN(date) > cutoff + 7 天容差`）→ **整段 upsert 补满**；窗口已满 → 只写新增日期（增量）
+- **「无可用历史」口径**：ESI **404（类型不存在）/ 400（类型不可交易，如蓝图）** 均为确定性结果 → 计入「已处理成功」，不计失败、不阻断裂全量成功；汇总单列 `pairsEmpty`
+- **轮次开始即重置状态**：`lastStartedAt = 本轮锚点`、**`lastFinishedAt = null`**（语义为「本轮进行中」）、`lastError = null`、`retryDueAt = null`、计数清零
 - **启动**：全局裁剪一次（旧口径遗留）+ 读状态；**启动不自动运行初始化**
 - **写入口径**：单 pair 自成一个 upsert + `DELETE date < cutoff` + 保存 ETag，整批 50 pair 合入**一个事务**
 
@@ -523,8 +527,8 @@
 - SDE 缓存：`%APPDATA%\com.eve-suite.desktop\sde-cache\`（**12 个 JSONL，约 270MB**；P4-4 起含 `typeMaterials.jsonl`，`types.jsonl` 单独约 108MB）
 - 实测入库（SDE build 3542233）：types 53,060 / stations 5,210 / blueprints 5,082 / 配方材料 42,830 / **类型材料 47,080**（9,545 个类型有精炼映射；可精炼矿石 440 种）
 - 实测采集（真实行情）：**全库 1,551,331 条订单 = 5 枢纽 891,282 条**（伏尔戈 404,558 / 多美 182,244 / 美特伯里斯 119,523 / 西玛特尔 70,557 / 金纳泽 114,642）**+ 全域层 65 区 660,049 条**（54 个非枢纽区有订单，其余 11 个经 ESI 直读确认零订单）；`market_collect_state` 覆盖 **70** 区域；聚合出约 21.2 万条 market_stats（P5-2 验收实测 211,832 行，此前「约 8 万」为枢纽层时期旧值）
-- 实测日线历史（**P5-2.8 全量初始化后**）：保留窗口 **400 天**，**每 pair 最大 400 行 / 最小 1 / 平均 233.8 / 超窗口（>400）pair = 0**；5 枢纽门槛筛清单 **36,537 条**（本轮 processed 36,555）；全表 **8,341,895 行 / 35,674 pair**；运行库体积 **db 1326.9 MB（VACUUM 后）+ WAL 131.6 MB**（初始化收尾 `wal_checkpoint(TRUNCATE)` 后 WAL 曾为 0.0 MB）
-- 测试：core **373 用例全绿**（**39 个文件**；P4-1 新增 24、P4-2 新增 21、P4-3 新增 19、P4-4 新增 14、P4-5-1 新增 4、**DB-1 新增 7**、**P5-1 新增 23**、**P5-2 新增 19**、**P5-2.6 新增 16**、**P5-2.7 新增 7**、**P5-2.8 删 11（HistoryBackfill 类）+ 增 11（history-init）**）；Rust **16 用例全绿**（另有 1 个 `#[ignore]` 真钥匙串往返自检，用 `cargo test -- --ignored --nocapture` 手动跑）
+- 实测日线历史（**P5-2.8 全量初始化 + 修复复跑后**）：保留窗口 **400 天**，**每 pair 最大 400 行 / 最小 1 / 平均 233.8 / 超窗口（>400）pair = 0**；5 枢纽门槛筛清单约 **36,540 条**（首轮 processed 36,555、修复后复跑 36,545 / **fail 0**）；全表 **8,346,592 行 / 35,699 pair**；运行库体积 **db 1332.4 MB + WAL 0.0 MB**（初始化与 VACUUM 收尾均做 `wal_checkpoint(TRUNCATE)`）
+- 测试：core **374 用例全绿**（**39 个文件**；P4-1 新增 24、P4-2 新增 21、P4-3 新增 19、P4-4 新增 14、P4-5-1 新增 4、**DB-1 新增 7**、**P5-1 新增 23**、**P5-2 新增 19**、**P5-2.6 新增 16**、**P5-2.7 新增 7**、**P5-2.8 删 11（HistoryBackfill 类）+ 增 12（history-init）**）；Rust **16 用例全绿**（另有 1 个 `#[ignore]` 真钥匙串往返自检，用 `cargo test -- --ignored --nocapture` 手动跑）
 - UI：`pnpm --filter @eve-suite/ui build` 通过（tsc + vite）；P3-8 **界面五步验收全部通过**（①立即同步 ②切页签不中断 ③暂停/恢复 ④生成今日快照 ⑤登出清除 + 二次授权 + 重新同步）；P4-1 更新资产页口径文案并**做了真机界面复核**（净值卡 / 资产表前 4 行 / 展开明细与库内直算逐项一致，见 P4-1 实测记录）；**P4-5-2 蓝图成本面板真机验收通过**（首屏 / 蓝图价 / runs-ME-TE / 803 多产出 / 37011 无产出行 / 活动 / 区域 8 项，与只读基准逐项一致，见 P4-5-2 实测记录）；**P4-5-3 LP 比价面板真机验收通过**（组合 6 行与排名前 8 行逐项一致、force 刷新、区域切换、24h 缓存复用，见 P4-5-3 实测记录）；**P4-5-4 算例对照面板真机验收通过**（三张卡：蓝图全零误差 / LP 固定量零误差且价格类标注漂移 / 矿石零误差，见 P4-5-4 实测记录）；**P5-1 全域层面板真机验收通过**（档位五档可切换并持久化、暂停区域边界收尾、恢复从第 12 区续扫、catch-up 自动触发、关闭档零请求、表内数值与库内直读一致，见 P5-1 实测记录）；**P5-2 价差页真机验收通过**（页签就位、Top1 与脚本一致、快照新鲜度行、枢纽切换、历史校验真实 ESI 拉取并降级标注，见 P5-2 实测记录）；**P5-2.6 预拉面板真机验收通过**（清单 36,533 条、默认 24h、启动即自动预拉、off 档「已关闭」+ 重启后持久、切回 24h 后立即预拉续跑、真实 ESI 拉取入库，见 P5-2.6 实测记录）
 - P4-1 / P4-2 **未新增迁移**（当时 schema 仍 v4）；**P4-3 新增迁移 0005**（LP 商店 3 表）、**P4-4 新增迁移 0006**（类型材料 1 表，schema → v6）：估值/蓝图引擎只读既有 `market_stats` / `market_orders` / `sde_blueprints*`，LP 引擎只读 `lp_*` 与 `lp_balances`，精炼引擎只读 `sde_type_materials` / `sde_types` / `sde_groups`
 - P3-8 收尾后的库态（登出清空 → 二次授权 → 重新同步恢复）：`characters` 1 / `assets` 1495 / `wallet_journal` 2 / `lp_balances` 6 / `networth_snapshots` 1 / 水位 8 条 / `personal:` ETag 8 条
@@ -668,6 +672,9 @@
 40. **【P5-2.8 实测】`VACUUM` 会把整库重写进 WAL，必须收尾 checkpoint**：对 1.4GB 库执行 `VACUUM` 后 **WAL 涨到 1461 MB**（db 1327 + wal 1461 ≈ **2.79 GB**），磁盘占用近乎翻倍；重启应用**不会**自动截断 WAL。
    - 对策：VACUUM 后紧接 `PRAGMA wal_checkpoint(TRUNCATE)`（初始化收尾同样要做）；实测 WAL 回落到 **131.6 MB**（残留为随后采集的新写入）。
    - 通用教训：**凡是有「整库重写 / 大批量写」的操作（VACUUM、大回填），收尾都要 checkpoint**，否则 WAL 会长期占着等量磁盘。
+41. **【P5-2.8 实测】ESI 日线端点有三种非 200 结果，别把「确定性无数据」当失败**：除 200 外，实测还有 **404 `{"error":"Type not found!"}`（类型不存在）** 与 **400 `{"error":"Type not tradable on market!"}`（类型不可交易，如蓝图）** —— 两者都是**确定性、不可重试**的（`EsiError.kind = 'client'`）。把它们计入 `pairsFailed` →「全量成功」永不成立（`lastFullOkAt` 不推进）、面板长期挂「最近错误」（首轮 353 条）。
+   - 对策：初始化把 **400 / 404 视为「该区无可用历史」**，计入已处理成功并单列 `pairsEmpty`；其余 4xx（如 403）仍算失败。已加单测覆盖「400+404 → 全成功」与「403 → 失败」两条。
+   - 判据经验：**先直连 ESI 看响应体**再决定归类 —— `Type not tradable on market!` / `Type not found!` 这类文案说明是**数据属性**而非请求错误。
 
 ## 关键文件地图
 
@@ -925,5 +932,30 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 - 工作区改动：`packages/core/src/market/{history-init.ts(新),history-backfill-state.ts,on-demand.ts,index.ts}`、`packages/core/src/esi/scheduler.ts`、`packages/core/src/db/migrations/{0009-history-date-index.ts(新),index.ts}`、`packages/core/test/market/{history-init.test.ts(新),history-backfill.test.ts}`、`packages/ui/src/market/{useHistoryInit.ts(新),HistoryInitPanel.tsx(新),useMarketCollector.ts,SpreadPage.tsx}`、`packages/ui/src/personal/usePersonalSync.ts`、`packages/ui/src/App.tsx`；**删除** `packages/core/src/market/history-backfill.ts`、`packages/ui/src/market/useHistoryBackfill.ts`、`HistoryBackfillPanel.tsx`；**新增迁移 0009、未动 Rust**
 - 应用**已停止**；真实库 **schema v9**、`market_history_daily` **8,341,895 行 / 35,674 pair**（每 pair ≤400、均值 233.8）、**db 1326.9 MB + WAL 131.6 MB**
 - 核验脚本（`%TEMP%`）：`eve-p528-baseline.cjs`（库基线）、`eve-p528-schema.cjs`（表结构）、`eve-p528-window.cjs`（窗口分布）、`eve-p528-etag.cjs`（304 复现）、`eve-p528-refill.cjs`（补满核对）、`eve-p528-final.cjs`（终态 + 文件体积）、`eve-p528-monitor.cjs`（轮次进度监控）
-- 遗留：**353 个 `HTTP 404`（类型在该区不存在）** → `lastFullOkAt` 未推进、`retryDueAt` 已设；自动轮次已取消，需**手动再点一次初始化**才会重试这 353 条
+- ~~遗留：353 个 `HTTP 404`（类型在该区不存在）→ `lastFullOkAt` 未推进~~ **已在本会话修复**：404 与 400（类型不可交易）统一归入「无可用历史」计入成功；复跑 `fail = 0`、`lastFullOkAt` 已推进（见踩坑 #41）
+
+## 会话纪要（2026-09-28 · 晚五：修复 P5-2.8 真机验收发现的问题）
+
+> 同上：仅供追溯，权威事实以「## P5 进度」为准。
+
+**背景**：晚四验收后遗留 353 个 `HTTP 404`，导致 `lastFullOkAt` 未推进、面板长期挂「最近错误」。
+
+**该会话完成事项**
+
+| # | 事项 | 结果 | 提交 |
+|---|---|---|---|
+| 1 | 直连 ESI 复现并归类失败：**404 `Type not found!`（类型不存在）** 与 **400 `Type not tradable on market!`（类型不可交易，如蓝图）** 均为**确定性**结果；另确认 `10000002:11011` 返回 **200 + `[]`**（窗口内无成交，原本已按「清空」处理） | 通过（证据见踩坑 #41） | — |
+| 2 | `HistoryInitializer`：**400 / 404 归入「该区无可用历史」**（计入已处理成功、单列 `pairsEmpty`），不再计失败 | 通过 | 见下 |
+| 3 | 轮次开始即重置状态（`lastFinishedAt = null` / `lastError = null` / `retryDueAt = null`） | 通过 | 见下 |
+| 4 | 用例：`history-init.test.ts` 11 → **12**（新增「400+404 → 全成功」；「硬失败」改用 **403**）；core **374** 全绿 + `tsc`(core/ui) | 通过 | 见下 |
+| 5 | 真机复跑验收：`pairs_failed = **0**`、**`last_full_ok_at` 已推进**、`retry_due_at` 清空；面板「上次完成」有值、汇总显示「（其中 353 条该区无可用历史）」 | 通过 | 见下 |
+| 6 | DEV_STATUS 更新 + 本地提交 | 通过 | 见下 |
+
+**关键验收证据**：见「## P5 进度」的「P5-2.8 实测记录」第 4 条缺陷 +「修复后复跑验证」，以及踩坑 #41。
+
+**该会话结束时的仓库 / 环境状态**
+
+- 工作区改动：`packages/core/src/market/history-init.ts`、`packages/core/test/market/history-init.test.ts`、`packages/ui/src/market/useHistoryInit.ts`、`DEV_STATUS.md`；**未动迁移 / Rust**
+- 应用**已停止**；真实库 **schema v9**、`market_history_daily` **8,346,592 行 / 35,699 pair**、**db 1332.4 MB + WAL 0.0 MB**；状态行 `last_full_ok_at` 已写入、`pairs_failed = 0`
+- **未修复（有意保留）**：真实库 `market_history_backfill_state` 多一列 `requests`（仓库 `0008` 无此列）—— 既存不一致、该列有 `DEFAULT 0` 且代码不使用；改「已发布迁移」或删真实库列的风险都高于收益，故仅记录
 
