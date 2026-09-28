@@ -158,6 +158,45 @@ describe('枢纽层采集器', () => {
     expect(state[0].last_error).not.toBeNull();
   });
 
+  it('首次采集即失败：记录错误但不写入成功水位（避免显示成「曾经成功过」）', async () => {
+    const { db, http, collector } = await setup();
+    http.enqueue(emptyResponse(404));
+
+    const failed = await collector.collectRegion(REGION);
+
+    expect(failed.error).not.toBeNull();
+    const state = await db.select<{ last_ok_at: string | null; last_error: string | null }>(
+      'SELECT last_ok_at, last_error FROM market_collect_state WHERE region_id = ?',
+      [REGION],
+    );
+    expect(state[0].last_ok_at).toBeNull();
+    expect(state[0].last_error).not.toBeNull();
+  });
+
+  it('先成功后失败：失败不清空既有成功水位', async () => {
+    const { db, http, collector } = await setup();
+    http.enqueue(
+      jsonResponse(200, [order({ order_id: 1, type_id: 34, price: 5, is_buy_order: false })], {
+        'x-pages': '1',
+        etag: 'W/"p1"',
+      }),
+    );
+    await collector.collectRegion(REGION);
+    const before = await db.select<{ last_ok_at: string | null }>(
+      'SELECT last_ok_at FROM market_collect_state WHERE region_id = ?',
+      [REGION],
+    );
+
+    http.enqueue(emptyResponse(404));
+    await collector.collectRegion(REGION);
+
+    const after = await db.select<{ last_ok_at: string | null }>(
+      'SELECT last_ok_at FROM market_collect_state WHERE region_id = ?',
+      [REGION],
+    );
+    expect(after[0].last_ok_at).toBe(before[0].last_ok_at);
+  });
+
   it('采集状态：成功后记录页数、行数与成功时间', async () => {
     const { db, http, collector } = await setup();
     http.enqueue(

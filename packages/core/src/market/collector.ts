@@ -301,6 +301,13 @@ interface CollectStateInput {
   lastError: string | null;
 }
 
+/**
+ * 写单区域水位。
+ *
+ * 失败时**不推进** `last_ok_at`（新行留 NULL、已有行保留旧值）：
+ * 否则「首次采集即失败」会把当前时刻写成成功时间，界面显示成「曾经成功过」，
+ * 与 `last_error` 自相矛盾（同类修正见 `market/global.ts` 的 `upsertRegionState`）。
+ */
 async function upsertCollectState(db: DbAdapter, input: CollectStateInput): Promise<void> {
   const now = new Date().toISOString();
   await db.execute(
@@ -314,6 +321,14 @@ async function upsertCollectState(db: DbAdapter, input: CollectStateInput): Prom
        pages           = excluded.pages,
        orders_written  = excluded.orders_written,
        requests        = excluded.requests`,
-    [input.regionId, now, now, input.lastError, input.pages, input.ordersWritten, input.requests],
+    [
+      input.regionId,
+      now,
+      input.lastError === null ? now : null,
+      input.lastError,
+      input.pages,
+      input.ordersWritten,
+      input.requests,
+    ],
   );
 }
