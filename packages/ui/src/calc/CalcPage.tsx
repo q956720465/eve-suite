@@ -1,6 +1,9 @@
 import { useState } from 'react';
 
+import type { LpStoreSyncHandle } from '../lp/useLpStoreSync';
+
 import BlueprintPanel from './BlueprintPanel';
+import LpPanel from './LpPanel';
 import RefinePanel from './RefinePanel';
 
 type CalcTab = 'blueprint' | 'lp' | 'refine';
@@ -11,8 +14,8 @@ const CALC_TABS: readonly { id: CalcTab; label: string }[] = [
   { id: 'refine', label: '矿石精炼值' },
 ];
 
-/** 计算器页：三大计算器（已实现蓝图成本与矿石精炼值，LP 面板在后续子阶段接入） */
-export default function CalcPage() {
+/** 计算器页：三大计算器（蓝图成本 / LP 比价 / 矿石精炼值） */
+export default function CalcPage({ lpStore }: { lpStore: LpStoreSyncHandle }) {
   const [tab, setTab] = useState<CalcTab>('refine');
 
   return (
@@ -32,14 +35,7 @@ export default function CalcPage() {
 
       {tab === 'refine' && <RefinePanel />}
       {tab === 'blueprint' && <BlueprintPanel />}
-      {tab === 'lp' && (
-        <div className="panel">
-          <h2>LP 比价</h2>
-          <p className="hint">
-            引擎（P4-3：ISK/LP 排名 + LP 组合）已就绪并验收；面板界面在下一子阶段实现。
-          </p>
-        </div>
-      )}
+      {tab === 'lp' && <LpPanel lpStore={lpStore} />}
     </section>
   );
 }

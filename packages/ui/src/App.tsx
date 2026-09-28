@@ -4,6 +4,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
 
 import CalcPage from './calc/CalcPage';
+import { useLpStoreSync } from './lp/useLpStoreSync';
 import MarketPage from './market/MarketPage';
 import { useMarketCollector } from './market/useMarketCollector';
 import WatchlistPage from './market/WatchlistPage';
@@ -35,6 +36,8 @@ export default function App() {
   // 「启动即同步」在应用启动后立即生效，而不是等到访问「资产」页
   const characters = useCharacters();
   const personalSync = usePersonalSync();
+  // LP 报价同步同样在应用级持有：只抓「角色有 LP 余额的军团」，24h 内不回源
+  const lpStore = useLpStoreSync(characters);
   const lastCharacterIdsRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -56,11 +59,13 @@ export default function App() {
     void personalSync.kick();
   }, [characters.ready, characterIdsKey, personalSync.kick]);
 
-  // 自动轮次完成后刷新角色卡：corporation_id / last_sync_at 随轮更新
+  // 自动轮次完成后刷新角色卡：corporation_id / last_sync_at 随轮更新；
+  // 同时补一次 LP 报价同步（LP 余额刚随个人数据落库，此时才知道该抓哪些军团）
   useEffect(() => {
     if (personalSync.lastRound === null) return;
     void characters.refresh().catch(() => undefined);
-  }, [personalSync.lastRound, characters.refresh]);
+    void lpStore.kick();
+  }, [personalSync.lastRound, characters.refresh, lpStore.kick]);
 
   useEffect(() => {
     invoke<string>('app_version')
@@ -116,7 +121,7 @@ export default function App() {
       {tab === 'market' && <MarketPage collector={collector} />}
       {tab === 'watchlist' && <WatchlistPage />}
       {tab === 'assets' && <AssetsPage characters={characters} sync={personalSync} />}
-      {tab === 'calc' && <CalcPage />}
+      {tab === 'calc' && <CalcPage lpStore={lpStore} />}
     </main>
   );
 }
