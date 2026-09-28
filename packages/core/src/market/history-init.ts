@@ -2,7 +2,7 @@ import type { DbAdapter } from '../db/types';
 import type { EsiClient } from '../esi/client';
 import { systemClock, type Clock } from '../esi/clock';
 import type { RequestScheduler } from '../esi/scheduler';
-import type { EsiErrorLimit, EsiRateLimit, MarketHistoryEntry } from '../esi/types';
+import { EsiError, type EsiErrorLimit, type EsiRateLimit, type MarketHistoryEntry } from '../esi/types';
 import { insertRows } from '../sde/batch';
 
 import { historyScope, saveEtags } from './etag-cache';
@@ -77,6 +77,8 @@ export interface HistoryInitSummary {
   pairsOk: number;
   pairsSkipped: number;
   pairsFailed: number;
+  /** 其中「该区无可用历史」（ESI 确定性 404 类型不存在 / 400 类型不可交易）的 pair 数（已计入 `pairsOk`） */
+  pairsEmpty: number;
   daysWritten: number;
   elapsedMs: number;
 }
@@ -209,6 +211,8 @@ export class HistoryInitializer {
       await writeHistoryBackfillState(this.db, {
         ...state,
         lastStartedAt: roundStartedIso,
+        // 新一轮开始即清空收尾时刻：状态语义为「本轮进行中」（中断判据 = started > finished）
+        lastFinishedAt: null,
         lastError: null,
         retryDueAt: null,
         pairsTotal: pairs.length,
@@ -223,6 +227,8 @@ export class HistoryInitializer {
     let pairsOk = resuming ? state.pairsOk : 0;
     let pairsSkipped = resuming ? state.pairsSkipped : 0;
     let pairsFailed = resuming ? state.pairsFailed : 0;
+    /** 其中「该区无此类型历史」的 pair 数（计入 pairsOk，仅用于汇总展示） */
+    let pairsEmpty = 0;
     let daysWritten = resuming ? state.daysWritten : 0;
     /** 续跑时累计上一段的活动耗时；本次只叠加「本段耗时」，不把空闲间隔算进来 */
     const baseElapsedMs = resuming ? state.elapsedMs : 0;
@@ -288,8 +294,14 @@ export class HistoryInitializer {
             await queue.put(prepared);
           }
         } catch (error) {
-          pairsFailed += 1;
-          if (firstError === null) firstError = errorMessage(error);
+          if (isHistoryUnavailable(error)) {
+            // ESI 确定性 404（类型不存在）/ 400（类型不可交易，如蓝图）→ 属正常终态，计入「已处理成功」
+            pairsEmpty += 1;
+            pairsOk += 1;
+          } else {
+            pairsFailed += 1;
+            if (firstError === null) firstError = errorMessage(error);
+          }
         }
         report(pair);
       }
@@ -334,6 +346,7 @@ export class HistoryInitializer {
       pairsOk,
       pairsSkipped,
       pairsFailed,
+      pairsEmpty,
       daysWritten,
       elapsedMs: nextState.elapsedMs,
     };
@@ -480,10 +493,17 @@ export class HistoryInitializer {
       pairsOk: 0,
       pairsSkipped: 0,
       pairsFailed: 0,
+      pairsEmpty: 0,
       daysWritten: 0,
       elapsedMs: 0,
     };
   }
+}
+
+/** ESI 对「该 (区域, 类型) 拿不到历史」的确定性响应：404 类型不存在 / 400 类型不可交易（如蓝图） */
+function isHistoryUnavailable(error: unknown): boolean {
+  if (!(error instanceof EsiError)) return false;
+  return error.status === 404 || error.status === 400;
 }
 
 function errorMessage(error: unknown): string {

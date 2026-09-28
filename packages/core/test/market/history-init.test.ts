@@ -296,11 +296,12 @@ describe('历史全量初始化 HistoryInitializer', () => {
     expect(http.calls[0].ifNoneMatch).toBeUndefined();
   });
 
-  it('失败隔离：单 pair 失败不阻断其余，并记录错误与重试时刻', async () => {
+  it('失败隔离：单 pair 硬失败（403）不阻断其余，并记录错误与重试时刻', async () => {
     const { db, http, clock, client, scheduler } = await setup();
     await seedStats(db, HUB_A, 1);
     await seedStats(db, HUB_A, 2);
-    http.enqueue(jsonResponse(404, { error: 'Type not found' }));
+    // 403 → EsiError('client')，不可重试（与 400/404 的「该区无可用历史」不同）
+    http.enqueue(jsonResponse(403, { error: 'Forbidden' }));
     http.enqueue(historyResponse(['2026-09-26']));
 
     const summary = await initOf({ db, clock, client, scheduler }).runInit();
@@ -308,9 +309,28 @@ describe('历史全量初始化 HistoryInitializer', () => {
     expect(summary.pairsFailed).toBe(1);
     expect(summary.pairsOk).toBe(1);
     const state = await readHistoryBackfillState(db);
-    expect(state.lastError).toContain('404');
+    expect(state.lastError).toContain('403');
     expect(state.retryDueAt).not.toBeNull();
     expect(state.lastFullOkAt).toBeNull();
+  });
+
+  it('该区无可用历史（ESI 确定性 404/400）：计入成功而非失败，并推进全量成功', async () => {
+    const { db, http, clock, client, scheduler } = await setup();
+    await seedStats(db, HUB_A, 1);
+    await seedStats(db, HUB_A, 2);
+    // 404 = 类型不存在；400 = 类型不可交易（蓝图类，实测 ESI 返回 "Type not tradable on market!"）
+    http.enqueue(jsonResponse(404, { error: 'Type not found!' }));
+    http.enqueue(jsonResponse(400, { error: 'Type not tradable on market!' }));
+
+    const summary = await initOf({ db, clock, client, scheduler }).runInit();
+
+    expect(summary.pairsFailed).toBe(0);
+    expect(summary.pairsOk).toBe(2);
+    expect(summary.pairsEmpty).toBe(2);
+    const state = await readHistoryBackfillState(db);
+    expect(state.lastError).toBeNull();
+    expect(state.retryDueAt).toBeNull();
+    expect(state.lastFullOkAt).not.toBeNull();
   });
 
   it('取消：停止拉取新 pair 并收尾，可续跑', async () => {

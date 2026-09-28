@@ -72,8 +72,12 @@ const EMPTY_LIMITS: ObservedLimits = { rateRemaining: null, rateLimit: null, err
 
 function describeSummary(summary: HistoryInitSummary): string {
   if (summary.skipped) return `未发起初始化：${summary.skipReason ?? '无需初始化'}`;
+  const okLabel =
+    summary.pairsEmpty > 0
+      ? `更新 ${summary.pairsOk.toLocaleString()} 条（其中 ${summary.pairsEmpty.toLocaleString()} 条该区无可用历史）`
+      : `更新 ${summary.pairsOk.toLocaleString()} 条`;
   const parts = [
-    `更新 ${summary.pairsOk.toLocaleString()} 条`,
+    okLabel,
     `跳过 ${summary.pairsSkipped.toLocaleString()} 条（本轮已处理）`,
     `写入 ${summary.daysWritten.toLocaleString()} 行日线`,
     `耗时 ${Math.round(summary.elapsedMs / 1000)} 秒`,
