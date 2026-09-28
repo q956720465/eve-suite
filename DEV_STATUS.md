@@ -216,7 +216,7 @@
   - **需求材料多重集不一致 = 0 项**（1 / 150 / 155 种）
   - 注意：**Fuzzwork 的 `offerID` 与 ESI 的 `offer_id` 是不同编号体系**（同军团条数相等但 ID 不对应）→ 对照必须按**属性元组**对齐，不能按 ID join
 - **ISK/LP 数值对照：仍不可程序化**（其计算表由表单 POST + 免责 cookie 触发；`items.php` 只返回物品名自动补全源）→ 保留人工核对路径。其页面明示口径 **"Prices are as per a simulated 5% buy from the Jita market"**（= Jita 5% 分位），与本项目默认一致；配合手算样例零误差
-- ⚠️ **已知口径差异（待你决定，未实现）**：Fuzzwork 对**蓝图类产出**按「生产技能 PE5 的材料成本」估算其价值；本项目对**无市场报价的产出**（含 BPC）返回 `iskPerLp = null`（不虚构估值）→ 这类 offer 目前不参与排名。若要覆盖，需引入「蓝图成本估值 + ME/PE 假设」，属引擎扩展，**建议单独立项确认**
+- ⚠️ **已知口径差异（已按用户决定「方案 A」收尾，2026-09-28）**：Fuzzwork 对**蓝图类产出**按材料成本估算价值；本项目对无报价产出（多为蓝图类 BPC）返回 `iskPerLp = null` 并单列 `unpricedOutputOffers`，**不虚构估算**；「蓝图成本估值 + ME/PE 假设」留到 **P5 工业成本闭环**一起做（届时可复用 P4-2 蓝图引擎，且属估算口径、无法与第三方零误差对账）
 
 **P4-3 口径（已定）**：
 - **数据源 = ESI 公共端点** `GET /loyalty/stores/{corporation_id}/offers/`（无需授权）——方案 §4.2 的「社区 GitHub JSON」**作废**（该端点已公开，官方数据优于第三方）
@@ -226,6 +226,7 @@
 - **表命名**：`lp_offers` / `lp_offer_items` / `lp_store_state`（**不带 `sde_` 前缀**——来源是 ESI 而非 SDE，方案 §5 的 `sde_lp_offers` 是历史假设）
 - **写入语义**：每军团**整体替换**（单事务先删后插）；失败隔离——单军团失败只写该行 `last_error`，`last_ok_at` 与既有报价不动
 - **新鲜度**：`max(服务端 Cache-Control/Expires 声明, 本地 24h TTL)`——既严格不早于服务端缓存回源（方案 §9 CCP 合规），又减少低频数据请求；到期后靠 ETag 条件请求（304 即零流量）；`force` 可越过
+- **产出无报价的 offer（多为蓝图类 BPC）返回 `iskPerLp = null` 并在结果中单列计数 `unpricedOutputOffers`**（方案 A 定稿，2026-09-28）：**不虚构估算值**；计数不受 `limit` / `minIskPerLp` 影响
 - **调度优先级**：`ondemand`（按需刷新）
 
 ## 数据库现状
@@ -255,7 +256,7 @@
    - **core 数据库层对瞬时锁的容错**：连接池 + 外部进程并发时曾观测到该轮同步因 `SQLITE_BUSY`（`database is locked`）整轮失败；根治需评估 `BEGIN IMMEDIATE` / BUSY 重试，属独立议题（P3-9 只把核验脚本改为只读打开，未动 core）
    - 登出是否调 SSO revoke 端点（当前只删本地令牌与数据）
    - **估值分位口径是否对齐第三方**：当前 `p5_sell` = 按订单数线性插值；ISK.GG/Fuzzwork 用**成交量加权**（A7 实测差异 +0.004%~+0.014%，数据本身一致）。若要新增「成交量加权」口径，属引擎 + P2 采集侧扩展，**需先出方案**
-   - **LP offer 的 BPC 类产出估值**：Fuzzwork 对「产出为蓝图」的 offer 按 **PE5 材料成本**估算价值；本项目对无市场报价产出返回 `iskPerLp = null`（不虚构）→ 这类 offer 暂不参与排名。若要覆盖，需引入「蓝图成本估值 + ME/PE 假设」，属引擎扩展，**需先出方案**
+   - **LP offer 的 BPC 类产出估值**（**方案 A 已定**：暂不实现，留 **P5 工业成本闭环**）：Fuzzwork 对「产出为蓝图」的 offer 按材料成本估算；本项目返回 `iskPerLp = null` 并单列 `unpricedOutputOffers`。将来实现时需先定 3 个参数：ME 假设、BPC 的 runs 取法、是否与实测 offer 混排
 
 ## 踩坑备忘（重要，勿重蹈）
 
