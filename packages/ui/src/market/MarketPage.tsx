@@ -17,15 +17,23 @@ import {
 import { openAdapter } from '@eve-suite/core/db/tauri';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import GlobalScanPanel from './GlobalScanPanel';
 import PriceChart, { type PricePoint } from './PriceChart';
+import type { GlobalScannerHandle } from './useGlobalScanner';
 import type { MarketCollectorHandle } from './useMarketCollector';
 
 const HUB_REGION_IDS = TRADE_HUBS.map((hub) => hub.regionId);
 /** 基准区域：吉他（The Forge），订单簿与图表以此为准 */
 const BASELINE_REGION_ID = HUB_REGION_IDS[0];
 
-/** 行情页：采集状态 + 物品行情（跨枢纽比价 / 订单簿 / 日线走势）+ 加入监视 */
-export default function MarketPage({ collector }: { collector: MarketCollectorHandle }) {
+/** 行情页：采集状态 + 全域层 + 物品行情（跨枢纽比价 / 订单簿 / 日线走势）+ 加入监视 */
+export default function MarketPage({
+  collector,
+  scanner,
+}: {
+  collector: MarketCollectorHandle;
+  scanner: GlobalScannerHandle;
+}) {
   const [message, setMessage] = useState('');
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<TypeSearchHit[]>([]);
@@ -162,6 +170,8 @@ export default function MarketPage({ collector }: { collector: MarketCollectorHa
 
         <p className="message">{message.length > 0 ? message : collector.message}</p>
       </div>
+
+      <GlobalScanPanel scanner={scanner} paused={collector.paused} />
 
       <div className="panel">
         <div className="panel-head">

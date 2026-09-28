@@ -1,15 +1,13 @@
 import {
-  createFetchHttpClient,
-  EsiClient,
   getCollectStates,
   HUB_COLLECT_INTERVAL_MS,
   MarketCollector,
-  RequestScheduler,
   TRADE_HUBS,
   type HubCollectState,
 } from '@eve-suite/core';
-import { initDatabase, openAdapter } from '@eve-suite/core/db/tauri';
 import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { initCoreRuntime } from '../core/runtime';
 
 export interface MarketCollectorHandle {
   states: HubCollectState[];
@@ -25,6 +23,10 @@ export interface MarketCollectorHandle {
 /**
  * 应用内行情采集调度：启动后立即采集一轮，其后每 5 分钟一轮（方案文档 §1）。
  * 采集逻辑在 core，本 Hook 只负责生命周期、定时与状态呈现。
+ *
+ * 请求调度器与 ESI 客户端取自**应用级 core 运行时单例**（方案 §4.4：全局令牌桶所有管道共享）——
+ * 枢纽层与全域层共用同一个优先级队列，全域层向枢纽层「让路」才真正生效
+ * （两个独立调度器时，优先级只在各自队列内有效）。
  */
 export function useMarketCollector(): MarketCollectorHandle {
   const [states, setStates] = useState<HubCollectState[]>([]);
@@ -37,8 +39,8 @@ export function useMarketCollector(): MarketCollectorHandle {
   const pausedRef = useRef(false);
 
   const refresh = useCallback(async () => {
-    const db = await openAdapter();
-    setStates(await getCollectStates(db, TRADE_HUBS.map((hub) => hub.regionId)));
+    const runtime = await initCoreRuntime();
+    setStates(await getCollectStates(runtime.db, TRADE_HUBS.map((hub) => hub.regionId)));
   }, []);
 
   const collectNow = useCallback(async () => {
@@ -79,20 +81,13 @@ export function useMarketCollector(): MarketCollectorHandle {
     void (async () => {
       try {
         setMessage('正在初始化行情采集…');
-        await initDatabase();
+        const runtime = await initCoreRuntime();
         if (disposed) return;
 
-        const db = await openAdapter();
-        const scheduler = new RequestScheduler({
-          requestsPerSecond: 10,
-          burst: 20,
-          maxConcurrent: 4,
-        });
-        const client = new EsiClient({ http: createFetchHttpClient() });
         const collector = new MarketCollector({
-          db,
-          client,
-          scheduler,
+          db: runtime.db,
+          client: runtime.esiClient,
+          scheduler: runtime.scheduler,
           onProgress: (progress) =>
             setMessage(`采集区域 ${progress.regionId}：${progress.page}/${progress.pages} 页`),
         });

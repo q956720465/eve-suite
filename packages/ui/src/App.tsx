@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import CalcPage from './calc/CalcPage';
 import { useLpStoreSync } from './lp/useLpStoreSync';
 import MarketPage from './market/MarketPage';
+import { useGlobalScanner } from './market/useGlobalScanner';
 import { useMarketCollector } from './market/useMarketCollector';
 import WatchlistPage from './market/WatchlistPage';
 import AssetsPage from './personal/AssetsPage';
@@ -31,6 +32,17 @@ export default function App() {
 
   // 行情采集在应用级持有：切页签不中断，也不重复初始化
   const collector = useMarketCollector();
+
+  // 全域层（跨区快照）同样在应用级持有：档位到期即补跑（catch-up），
+  // 请求与枢纽层共用同一个调度器 —— 全域请求以更低优先级入队，为枢纽轮次让路
+  const globalScanner = useGlobalScanner({ isPaused: () => collector.paused });
+  const wasPausedRef = useRef(false);
+  useEffect(() => {
+    const wasPaused = wasPausedRef.current;
+    wasPausedRef.current = collector.paused;
+    // 暂停期间跳过的全域扫描，在「恢复采集」时立刻补上
+    if (wasPaused && !collector.paused) void globalScanner.kick();
+  }, [collector.paused, globalScanner.kick]);
 
   // 个人数据（授权 + 同步调度）同样在应用级持有：调度不依赖当前页签，
   // 「启动即同步」在应用启动后立即生效，而不是等到访问「资产」页
@@ -118,7 +130,7 @@ export default function App() {
       </header>
 
       {tab === 'sde' && <SdePage />}
-      {tab === 'market' && <MarketPage collector={collector} />}
+      {tab === 'market' && <MarketPage collector={collector} scanner={globalScanner} />}
       {tab === 'watchlist' && <WatchlistPage />}
       {tab === 'assets' && <AssetsPage characters={characters} sync={personalSync} />}
       {tab === 'calc' && <CalcPage lpStore={lpStore} />}

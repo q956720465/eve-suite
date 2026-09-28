@@ -9,6 +9,37 @@ export { historyScope, loadEtags, ordersPageScope, saveEtags } from './etag-cach
 export { MarketCollector } from './collector';
 export type { CollectProgress, CollectRegionResult, MarketCollectorOptions } from './collector';
 
+export {
+  DEFAULT_GLOBAL_SCAN_TIER,
+  EMPTY_GLOBAL_SCAN_STATE,
+  GLOBAL_SCAN_RETRY_DELAY_MS,
+  GLOBAL_SCAN_TIERS,
+  GLOBAL_SCAN_TIER_KEY,
+  GLOBAL_SCAN_TIER_MS,
+  MARKET_REGION_ID_MAX,
+  MARKET_REGION_ID_MIN,
+  getGlobalScanStatus,
+  isScanDue,
+  isScanInterrupted,
+  listGlobalScanRegionIds,
+  listMarketRegionIds,
+  nextScanDueAt,
+  parseGlobalScanTier,
+  readGlobalScanState,
+  readGlobalScanTier,
+  writeGlobalScanState,
+  writeGlobalScanTier,
+} from './global-state';
+export type { GlobalScanState, GlobalScanStatus, GlobalScanTier } from './global-state';
+
+export { GlobalMarketScanner } from './global';
+export type {
+  GlobalRegionResult,
+  GlobalScanProgress,
+  GlobalScanSummary,
+  GlobalScannerOptions,
+} from './global';
+
 export { ONDEMAND_TTL_MS, refreshTypeHistory, refreshTypeOrders } from './on-demand';
 export type { HistoryRefreshResult, MarketDeps, TypeRefreshResult } from './on-demand';
 
