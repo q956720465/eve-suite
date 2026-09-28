@@ -11,6 +11,7 @@ import {
   mapStation,
   mapSystem,
   mapType,
+  mapTypeMaterialRows,
   type StationContext,
 } from './parse';
 import type {
@@ -24,6 +25,7 @@ import type {
   RawSolarSystem,
   RawStationOperation,
   RawType,
+  RawTypeMaterials,
   SdeFileSource,
   SdeFileName,
   SdeImportProgress,
@@ -35,6 +37,28 @@ export interface ImportSdeOptions {
   force?: boolean;
   onProgress?: (progress: SdeImportProgress) => void;
 }
+
+/**
+ * 本次导入读取的全部文件（同时作为 `sde_meta` 中的「文件集签名」）。
+ * **文件集变化时，即使 SDE 构建号相同也必须重导**——否则新增数据（如 P4-4 的
+ * `typeMaterials.jsonl`）在版本未变时永远不会落库。
+ *
+ * Tauri 侧的 `SDE_REQUIRED_FILES` 直接引用本常量，保证「缓存文件检查」与「导入文件集」一致。
+ */
+export const SDE_IMPORTED_FILES: readonly SdeFileName[] = [
+  '_sde.jsonl',
+  'categories.jsonl',
+  'groups.jsonl',
+  'types.jsonl',
+  'mapRegions.jsonl',
+  'mapConstellations.jsonl',
+  'mapSolarSystems.jsonl',
+  'npcStations.jsonl',
+  'npcCorporations.jsonl',
+  'stationOperations.jsonl',
+  'blueprints.jsonl',
+  'typeMaterials.jsonl',
+];
 
 const CATEGORY_COLUMNS = ['category_id', 'name_en', 'name_zh', 'published'] as const;
 const GROUP_COLUMNS = ['group_id', 'category_id', 'name_en', 'name_zh', 'published'] as const;
@@ -87,9 +111,11 @@ const STATION_COLUMNS = [
 const BLUEPRINT_COLUMNS = ['blueprint_type_id', 'max_production_limit'] as const;
 const ACTIVITY_COLUMNS = ['blueprint_type_id', 'activity', 'time_seconds'] as const;
 const IO_COLUMNS = ['blueprint_type_id', 'activity', 'direction', 'type_id', 'quantity'] as const;
+const TYPE_MATERIAL_COLUMNS = ['type_id', 'material_type_id', 'quantity'] as const;
 
 /** 重新导入前需清空的表（无外键约束，顺序无关） */
 const TABLES_TO_CLEAR = [
+  'sde_type_materials',
   'sde_blueprint_io',
   'sde_blueprint_activities',
   'sde_blueprints',
@@ -104,10 +130,13 @@ const TABLES_TO_CLEAR = [
 ] as const;
 
 const META_BUILD_NUMBER = 'build_number';
+const META_FILES_SIGNATURE = 'imported_files';
 
 /**
  * 导入 SDE 静态数据。
- * 单事务执行：失败整体回滚，不留半成品；同版本重复调用直接跳过（除 force）。
+ * 单事务执行：失败整体回滚，不留半成品；
+ * 同版本**且**文件集一致时跳过（除 force）——文件集签名用于让新增数据文件在
+ * 构建号未变时也能落库。
  */
 export async function importSde(
   db: DbAdapter,
@@ -117,8 +146,14 @@ export async function importSde(
   const startedAt = Date.now();
   const version = await source.version();
   const existing = await readMeta(db, META_BUILD_NUMBER);
+  const existingFiles = await readMeta(db, META_FILES_SIGNATURE);
+  const fileSignature = SDE_IMPORTED_FILES.join(',');
 
-  if (!options.force && existing === String(version.buildNumber)) {
+  if (
+    !options.force &&
+    existing === String(version.buildNumber) &&
+    existingFiles === fileSignature
+  ) {
     return { skipped: true, version, counts: {}, elapsedMs: Date.now() - startedAt };
   }
 
@@ -155,9 +190,12 @@ export async function importSde(
     counts.blueprint_activities = blueprints.activities;
     counts.blueprint_io = blueprints.io;
 
+    counts.type_materials = await importTypeMaterials(tx, source, options);
+
     await writeMeta(tx, META_BUILD_NUMBER, String(version.buildNumber));
     await writeMeta(tx, 'release_date', version.releaseDate);
     await writeMeta(tx, 'imported_at', new Date().toISOString());
+    await writeMeta(tx, META_FILES_SIGNATURE, fileSignature);
     for (const [table, rows] of Object.entries(counts)) {
       await writeMeta(tx, `rows_${table}`, String(rows));
     }
@@ -291,6 +329,34 @@ async function importBlueprints(
     activities: activityWriter.written,
     io: ioWriter.written,
   };
+}
+
+/** 类型材料（精炼/拆解映射，P4-4）：JSONL 一行 → 多行材料 */
+async function importTypeMaterials(
+  db: DbAdapter,
+  source: SdeFileSource,
+  options: ImportSdeOptions,
+): Promise<number> {
+  const writer = new RowWriter(db, 'sde_type_materials', TYPE_MATERIAL_COLUMNS);
+  let rows = 0;
+
+  for await (const line of source.lines('typeMaterials.jsonl')) {
+    if (line.trim().length === 0) continue;
+    const raw = safeParse<RawTypeMaterials>(line);
+    if (raw !== null) {
+      for (const material of mapTypeMaterialRows(raw)) {
+        await writer.add(toRowValues(material, TYPE_MATERIAL_COLUMNS));
+      }
+    }
+    rows += 1;
+    if (rows % PROGRESS_INTERVAL_ROWS === 0) {
+      options.onProgress?.({ file: 'typeMaterials.jsonl', rows, written: writer.written });
+    }
+  }
+
+  await writer.flush();
+  options.onProgress?.({ file: 'typeMaterials.jsonl', rows, written: writer.written });
+  return writer.written;
 }
 
 async function loadSystems(

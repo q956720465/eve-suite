@@ -144,6 +144,25 @@ export const SAMPLE_FILES: Partial<Record<SdeFileName, string[]>> = {
       maxProductionLimit: 300,
     }),
   ],
+
+  // 真实取值：Veldspar 1230 → 400 三钛/100 单位；Scordite 1228 → 150 三钛 + 110 类晶体胶矿
+  'typeMaterials.jsonl': [
+    JSON.stringify({ _key: 1230, materials: [{ materialTypeID: 34, quantity: 400 }] }),
+    JSON.stringify({
+      _key: 1228,
+      materials: [
+        { materialTypeID: 34, quantity: 150 },
+        { materialTypeID: 35, quantity: 110 },
+      ],
+    }),
+    // 空材料 → 不产生行
+    JSON.stringify({ _key: 99999, materials: [] }),
+    // 非法材料行（缺字段 / 数量非正）→ 逐条跳过
+    JSON.stringify({
+      _key: 1231,
+      materials: [{ materialTypeID: 34 }, { quantity: 5 }, { materialTypeID: 36, quantity: 0 }],
+    }),
+  ],
 };
 
 /** 内存数据源：测试用（不触网、不落盘） */

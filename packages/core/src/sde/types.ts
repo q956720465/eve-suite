@@ -112,6 +112,18 @@ export interface RawBlueprint {
   activities?: Record<string, RawBlueprintActivity | undefined>;
 }
 
+/** `typeMaterials.jsonl` 的单条材料（官方字段名 materialTypeID） */
+export interface RawTypeMaterialEntry {
+  materialTypeID?: number;
+  quantity?: number;
+}
+
+/** `typeMaterials.jsonl` 一行：某类型精炼/拆解可得哪些材料 */
+export interface RawTypeMaterials {
+  _key?: number;
+  materials?: RawTypeMaterialEntry[];
+}
+
 // ---------- 数据库行 ----------
 
 export interface SdeCategoryRow {
@@ -208,6 +220,13 @@ export interface SdeBlueprintIoRow {
   quantity: number;
 }
 
+/** 类型 → 精炼/拆解产出（P4-4 矿石精炼值引擎的数据基础） */
+export interface SdeTypeMaterialRow {
+  type_id: number;
+  material_type_id: number;
+  quantity: number;
+}
+
 /** SDE 版本信息（来自 _sde.jsonl） */
 export interface SdeVersion {
   buildNumber: number;
@@ -233,7 +252,8 @@ export type SdeFileName =
   | 'npcStations.jsonl'
   | 'npcCorporations.jsonl'
   | 'stationOperations.jsonl'
-  | 'blueprints.jsonl';
+  | 'blueprints.jsonl'
+  | 'typeMaterials.jsonl';
 
 /** 导入进度回调载荷 */
 export interface SdeImportProgress {

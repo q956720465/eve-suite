@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { importSde } from '../../src/sde/import';
+import { SDE_IMPORTED_FILES, importSde } from '../../src/sde/import';
 import type { SdeFileName, SdeFileSource, SdeImportProgress } from '../../src/sde/types';
 import { countRows, createMigratedDb } from '../helpers/db';
 
@@ -24,21 +24,26 @@ describe('SDE 导入', () => {
       blueprints: 1,
       blueprint_activities: 4,
       blueprint_io: 2,
+      // 1230 → 1 行；1228 → 2 行；其余样本行为空/非法 → 0 行
+      type_materials: 3,
     });
 
     expect(await countRows(db, 'sde_types')).toBe(4);
     expect(await countRows(db, 'sde_stations')).toBe(2);
     expect(await countRows(db, 'sde_blueprint_io')).toBe(2);
+    expect(await countRows(db, 'sde_type_materials')).toBe(3);
 
     const meta = await db.select<{ key: string; value: string }>('SELECT key, value FROM sde_meta');
     const metaMap = new Map(meta.map((row) => [row.key, row.value]));
     expect(metaMap.get('build_number')).toBe('3542233');
     expect(metaMap.get('release_date')).toBe('2026-09-24T11:12:47Z');
     expect(metaMap.get('rows_types')).toBe('4');
+    expect(metaMap.get('rows_type_materials')).toBe('3');
+    expect(metaMap.get('imported_files')).toBe(SDE_IMPORTED_FILES.join(','));
     expect(metaMap.get('imported_at')).toBeTruthy();
   });
 
-  it('幂等：同版本重复导入直接跳过', async () => {
+  it('幂等：同版本且文件集一致时重复导入直接跳过', async () => {
     const db = await createMigratedDb();
     const source = createMemorySource();
     await importSde(db, source);
@@ -46,6 +51,24 @@ describe('SDE 导入', () => {
     const second = await importSde(db, source);
     expect(second.skipped).toBe(true);
     expect(await countRows(db, 'sde_types')).toBe(4);
+  });
+
+  it('文件集签名变化：构建号未变也要重新导入', async () => {
+    const db = await createMigratedDb();
+    const source = createMemorySource();
+    await importSde(db, source);
+
+    // 模拟「旧版本程序导入过、尚未包含新数据文件」
+    await db.execute("UPDATE sde_meta SET value = 'blueprints.jsonl' WHERE key = 'imported_files'");
+
+    const second = await importSde(db, source);
+    expect(second.skipped).toBe(false);
+    expect(await countRows(db, 'sde_type_materials')).toBe(3);
+
+    const rows = await db.select<{ value: string }>(
+      "SELECT value FROM sde_meta WHERE key = 'imported_files'",
+    );
+    expect(rows[0].value).toBe(SDE_IMPORTED_FILES.join(','));
   });
 
   it('force：强制重导先清空，不产生重复行', async () => {
@@ -99,6 +122,7 @@ describe('SDE 导入', () => {
     expect(files.has('types.jsonl')).toBe(true);
     expect(files.has('npcStations.jsonl')).toBe(true);
     expect(files.has('blueprints.jsonl')).toBe(true);
+    expect(files.has('typeMaterials.jsonl')).toBe(true);
     const typeEvent = events.find((event) => event.file === 'types.jsonl');
     expect(typeEvent?.written).toBe(4);
   });

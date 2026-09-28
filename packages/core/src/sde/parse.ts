@@ -8,6 +8,7 @@ import type {
   RawRegion,
   RawSolarSystem,
   RawType,
+  RawTypeMaterials,
   SdeBlueprintActivityRow,
   SdeBlueprintIoRow,
   SdeBlueprintRow,
@@ -17,6 +18,7 @@ import type {
   SdeRegionRow,
   SdeStationRow,
   SdeSystemRow,
+  SdeTypeMaterialRow,
   SdeTypeRow,
 } from './types';
 
@@ -216,4 +218,22 @@ export function mapBlueprintRows(raw: RawBlueprint): BlueprintRows | null {
   }
 
   return { blueprint, activities, io };
+}
+
+/**
+ * `typeMaterials.jsonl` 一行 → 多行材料（P4-4）。
+ * 无效材料行（缺 typeID / 缺数量 / 数量非正）逐条跳过；整行无有效材料时返回空数组。
+ */
+export function mapTypeMaterialRows(raw: RawTypeMaterials): SdeTypeMaterialRow[] {
+  const typeId = intOrNull(raw._key);
+  if (typeId === null) return [];
+
+  const rows: SdeTypeMaterialRow[] = [];
+  for (const material of raw.materials ?? []) {
+    const materialTypeId = intOrNull(material.materialTypeID);
+    const quantity = intOrNull(material.quantity);
+    if (materialTypeId === null || quantity === null || quantity <= 0) continue;
+    rows.push({ type_id: typeId, material_type_id: materialTypeId, quantity });
+  }
+  return rows;
 }

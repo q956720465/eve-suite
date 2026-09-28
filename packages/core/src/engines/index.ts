@@ -48,3 +48,20 @@ export type {
   LpPortfolioEntry,
   RankLpOffersOptions,
 } from './lp';
+
+export {
+  ASTEROID_CATEGORY_ID,
+  DEFAULT_REFINE_TAX,
+  DEFAULT_REFINE_YIELD,
+  computeRefinedQuantity,
+  listOreMaterials,
+  listRefinableOres,
+  refineOre,
+} from './refining';
+export type {
+  OreMaterial,
+  RefinableOre,
+  RefineMaterialLine,
+  RefineOreInput,
+  RefineOreResult,
+} from './refining';

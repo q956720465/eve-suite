@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
+import { SDE_IMPORTED_FILES } from './import';
 import type { SdeFileName, SdeFileSource, SdeVersion } from './types';
 
 /** 版本探测地址：单行 JSON，含 buildNumber / releaseDate */
@@ -11,20 +12,12 @@ export const SDE_LATEST_URL =
 export const SDE_ZIP_URL =
   'https://developers.eveonline.com/static-data/eve-online-static-data-latest-jsonl.zip';
 
-/** 导入所需文件（与 SdeFileName 一一对应） */
-export const SDE_REQUIRED_FILES: readonly SdeFileName[] = [
-  '_sde.jsonl',
-  'categories.jsonl',
-  'groups.jsonl',
-  'types.jsonl',
-  'mapRegions.jsonl',
-  'mapConstellations.jsonl',
-  'mapSolarSystems.jsonl',
-  'npcStations.jsonl',
-  'npcCorporations.jsonl',
-  'stationOperations.jsonl',
-  'blueprints.jsonl',
-];
+/**
+ * 导入所需文件（与 `SdeFileName` 一一对应）。
+ * 直接引用导入器的文件集常量：**新增导入文件时只改 `SDE_IMPORTED_FILES` 一处**，
+ * 缓存完整性检查与导入文件集会同步变化（从而在构建号未变时也能触发重导）。
+ */
+export const SDE_REQUIRED_FILES: readonly SdeFileName[] = SDE_IMPORTED_FILES;
 
 /** 单次分块读取字节数（4MB：types.jsonl 约 37 块） */
 const READ_CHUNK_BYTES = 4 * 1024 * 1024;
