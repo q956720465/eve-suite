@@ -77,6 +77,42 @@ export type {
   SpreadSortKey,
 } from './spread';
 
+export {
+  DEFAULT_HISTORY_BACKFILL_TIER,
+  EMPTY_HISTORY_BACKFILL_STATE,
+  HISTORY_BACKFILL_MIN_BUY_ORDERS,
+  HISTORY_BACKFILL_MIN_SELL_ORDERS,
+  HISTORY_BACKFILL_REGION_IDS,
+  HISTORY_BACKFILL_RETRY_DELAY_MS,
+  HISTORY_BACKFILL_TIERS,
+  HISTORY_BACKFILL_TIER_KEY,
+  HISTORY_BACKFILL_TIER_MS,
+  countBackfillPairs,
+  getHistoryBackfillStatus,
+  isBackfillDue,
+  isBackfillInterrupted,
+  listBackfillPairs,
+  nextBackfillDueAt,
+  parseHistoryBackfillTier,
+  readHistoryBackfillState,
+  readHistoryBackfillTier,
+  writeHistoryBackfillState,
+  writeHistoryBackfillTier,
+} from './history-backfill-state';
+export type {
+  BackfillPair,
+  HistoryBackfillState,
+  HistoryBackfillStatus,
+  HistoryBackfillTier,
+} from './history-backfill-state';
+
+export { HISTORY_BACKFILL_RATE_PER_SECOND, HistoryBackfill } from './history-backfill';
+export type {
+  HistoryBackfillOptions,
+  HistoryBackfillProgress,
+  HistoryBackfillSummary,
+} from './history-backfill';
+
 export { getCollectStates, getDailyHistory, getOrderBook, getTypeStats, getTypeStatsAcrossHubs } from './repo';
 export type {
   HubCollectState,

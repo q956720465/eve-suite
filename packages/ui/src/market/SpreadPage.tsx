@@ -16,6 +16,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { initCoreRuntime } from '../core/runtime';
 
+import HistoryBackfillPanel from './HistoryBackfillPanel';
+import type { HistoryBackfillHandle } from './useHistoryBackfill';
+
 /** 区域范围：全部已采集区域 / 仅五大枢纽之间 */
 type RegionScope = 'all' | 'hubs';
 
@@ -53,8 +56,17 @@ function regionName(zh: string | null, en: string): string {
  * 跨区价差视图（P5-2）：
  * 第一段 SQL 粗筛（零请求，只读本地快照）；
  * 第二段「历史校验」为用户手势触发的按需拉取（ESI 日线 24h 缓存，复看零请求）。
+ *
+ * 页首挂「历史基线预拉」面板（P5-2.6）：把 5 枢纽候选的历史预拉到本地，
+ * 使下方的历史校验对枢纽候选零等待；预拉不到的候选仍走按需兜底。
  */
-export default function SpreadPage() {
+export default function SpreadPage({
+  backfill,
+  paused,
+}: {
+  backfill: HistoryBackfillHandle;
+  paused: boolean;
+}) {
   const [scope, setScope] = useState<RegionScope>('all');
   const [sortBy, setSortBy] = useState<SpreadSortKey>(DEFAULT_SPREAD_FILTERS.sortBy);
   const [limitInput, setLimitInput] = useState(String(DEFAULT_SPREAD_FILTERS.limit));
@@ -128,6 +140,8 @@ export default function SpreadPage() {
 
   return (
     <section className="market">
+      <HistoryBackfillPanel backfill={backfill} paused={paused} />
+
       <div className="panel">
         <div className="panel-head">
           <h2>跨区价差</h2>

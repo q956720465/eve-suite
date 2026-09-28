@@ -14,6 +14,7 @@ import { useCharacters } from './personal/useCharacters';
 import { usePersonalSync } from './personal/usePersonalSync';
 import SdePage from './sde/SdePage';
 import SpreadPage from './market/SpreadPage';
+import { useHistoryBackfill } from './market/useHistoryBackfill';
 
 type Tab = 'sde' | 'market' | 'spread' | 'watchlist' | 'assets' | 'calc';
 
@@ -38,13 +39,21 @@ export default function App() {
   // 全域层（跨区快照）同样在应用级持有：档位到期即补跑（catch-up），
   // 请求与枢纽层共用同一个调度器 —— 全域请求以更低优先级入队，为枢纽轮次让路
   const globalScanner = useGlobalScanner({ isPaused: () => collector.paused });
+
+  // 枢纽历史基线预拉同样在应用级持有：每天一次的后台任务，与页签无关；
+  // 请求走 global 优先级并限速 5 req/s，为枢纽采集让路
+  const historyBackfill = useHistoryBackfill({ isPaused: () => collector.paused });
+
   const wasPausedRef = useRef(false);
   useEffect(() => {
     const wasPaused = wasPausedRef.current;
     wasPausedRef.current = collector.paused;
-    // 暂停期间跳过的全域扫描，在「恢复采集」时立刻补上
-    if (wasPaused && !collector.paused) void globalScanner.kick();
-  }, [collector.paused, globalScanner.kick]);
+    // 暂停期间跳过的全域扫描与历史预拉，在「恢复采集」时立刻补上
+    if (wasPaused && !collector.paused) {
+      void globalScanner.kick();
+      void historyBackfill.kick();
+    }
+  }, [collector.paused, globalScanner.kick, historyBackfill.kick]);
 
   // 个人数据（授权 + 同步调度）同样在应用级持有：调度不依赖当前页签，
   // 「启动即同步」在应用启动后立即生效，而不是等到访问「资产」页
@@ -133,7 +142,7 @@ export default function App() {
 
       {tab === 'sde' && <SdePage />}
       {tab === 'market' && <MarketPage collector={collector} scanner={globalScanner} />}
-      {tab === 'spread' && <SpreadPage />}
+      {tab === 'spread' && <SpreadPage backfill={historyBackfill} paused={collector.paused} />}
       {tab === 'watchlist' && <WatchlistPage />}
       {tab === 'assets' && <AssetsPage characters={characters} sync={personalSync} />}
       {tab === 'calc' && <CalcPage lpStore={lpStore} />}

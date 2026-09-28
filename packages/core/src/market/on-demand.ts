@@ -1,6 +1,6 @@
 import type { DbAdapter } from '../db/types';
 import type { EsiClient } from '../esi/client';
-import type { RequestScheduler } from '../esi/scheduler';
+import type { RequestPriority, RequestScheduler } from '../esi/scheduler';
 import { insertRows } from '../sde/batch';
 
 import { historyScope, loadEtags, saveEtags } from './etag-cache';
@@ -94,12 +94,15 @@ export async function refreshTypeOrders(
 /**
  * 刷新单个物品在某区域的日线历史（ESI 自带约 400 天）。
  * 默认每日一次（方案文档：北京 19:00 停机后回填），ETag 命中时仅刷新抓取时间。
+ *
+ * `priority` 默认 `ondemand`（用户主动等待的场景，抢时间）；
+ * 「枢纽历史基线预拉」这类后台批量任务传 `global`，让路给枢纽 / 个人数据。
  */
 export async function refreshTypeHistory(
   deps: MarketDeps,
   regionId: number,
   typeId: number,
-  options: { force?: boolean; now?: number } = {},
+  options: { force?: boolean; now?: number; priority?: RequestPriority } = {},
 ): Promise<HistoryRefreshResult> {
   const now = options.now ?? Date.now();
   const today = new Date(now).toISOString().slice(0, 10);
@@ -110,7 +113,7 @@ export async function refreshTypeHistory(
 
   const scope = historyScope(regionId, typeId);
   const etags = await loadEtags(deps.db, [scope]);
-  const result = await deps.scheduler.run('ondemand', () =>
+  const result = await deps.scheduler.run(options.priority ?? 'ondemand', () =>
     deps.client.fetchTypeHistory(regionId, typeId, { etag: etags.get(scope) }),
   );
   deps.scheduler.observe(result.rateLimit, result.errorLimit);
