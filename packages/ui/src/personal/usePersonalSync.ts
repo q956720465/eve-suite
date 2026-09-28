@@ -27,6 +27,12 @@ export interface PersonalSyncHandle {
   start: () => Promise<void>;
   stop: () => void;
   togglePause: () => void;
+  /** 幂等暂停（供独占编排调用）：重复调用无副作用 */
+  pause: () => void;
+  /** 幂等恢复（供独占编排调用）：重复调用无副作用 */
+  resume: () => void;
+  /** 读 ref 的实时暂停态（异步编排中避免 state 滞后） */
+  isPaused: () => boolean;
   syncNow: () => Promise<void>;
   /** 角色集合变化（如新授权）后立即补跑一轮；暂停或调度未启动时忽略 */
   kick: () => Promise<void>;
@@ -52,6 +58,8 @@ export function usePersonalSync(): PersonalSyncHandle {
   const schedulerRef = useRef<PersonalSyncScheduler | null>(null);
   const runtimeRef = useRef<CoreRuntime | null>(null);
   const busyRef = useRef(false);
+  /** 暂停态镜像：供幂等 pause()/resume()（state 在回调里可能滞后） */
+  const pausedRef = useRef(false);
 
   const ensureRuntime = useCallback(async (): Promise<CoreRuntime> => {
     if (runtimeRef.current !== null) return runtimeRef.current;
@@ -105,6 +113,7 @@ export function usePersonalSync(): PersonalSyncHandle {
       schedulerRef.current = scheduler;
       scheduler.start();
       setRunning(true);
+      pausedRef.current = false;
       setPaused(false);
     } catch (error) {
       setMessage(`同步初始化失败：${error instanceof Error ? error.message : String(error)}`);
@@ -117,21 +126,31 @@ export function usePersonalSync(): PersonalSyncHandle {
     setRunning(false);
   }, []);
 
-  const togglePause = useCallback(() => {
-    const scheduler = schedulerRef.current;
-    if (scheduler === null) return;
-    setPaused((previous) => {
-      const next = !previous;
-      if (next) {
-        scheduler.pause();
-        setMessage('已暂停个人数据同步（不再发起新请求）');
-      } else {
-        scheduler.resume();
-        setMessage('已恢复个人数据同步');
-      }
-      return next;
-    });
+  const pause = useCallback(() => {
+    if (pausedRef.current) return;
+    pausedRef.current = true;
+    setPaused(true);
+    schedulerRef.current?.pause();
+    setMessage('已暂停个人数据同步（不再发起新请求）');
   }, []);
+
+  const resume = useCallback(() => {
+    if (!pausedRef.current) return;
+    pausedRef.current = false;
+    setPaused(false);
+    schedulerRef.current?.resume();
+    setMessage('已恢复个人数据同步');
+  }, []);
+
+  const togglePause = useCallback(() => {
+    if (pausedRef.current) {
+      resume();
+    } else {
+      pause();
+    }
+  }, [pause, resume]);
+
+  const isPaused = useCallback(() => pausedRef.current, []);
 
   /** 手动「立即同步」：越过 Cache-Control 到期时间，强制拉取并写当日快照 */
   const syncNow = useCallback(async () => {
@@ -208,6 +227,9 @@ export function usePersonalSync(): PersonalSyncHandle {
     start,
     stop,
     togglePause,
+    pause,
+    resume,
+    isPaused,
     syncNow,
     kick,
     clearReauth,

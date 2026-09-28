@@ -17,6 +17,14 @@ export interface MarketCollectorHandle {
   /** 立即采集一轮（5 分钟定时外的手动触发） */
   collectNow: () => Promise<void>;
   togglePause: () => void;
+  /** 幂等暂停（供独占编排调用）：重复调用无副作用 */
+  pause: () => void;
+  /** 幂等恢复（供独占编排调用）：重复调用无副作用 */
+  resume: () => void;
+  /** 读 ref 的实时暂停态（异步编排中避免 state 滞后） */
+  isPaused: () => boolean;
+  /** 读 ref 的实时忙态（是否有在途采集轮次） */
+  isBusy: () => boolean;
   refresh: () => Promise<void>;
 }
 
@@ -123,17 +131,43 @@ export function useMarketCollector(): MarketCollectorHandle {
    * 不能改成请求调度器级暂停：在途轮次已把整页请求排入队列，请求级暂停会把它们永远压住，
    * 轮次不结束、`busy` 不复位（现象：暂停后「采集中…」长期不变）。故只拦「新一轮开始」。
    */
-  const togglePause = useCallback(() => {
-    const next = !pausedRef.current;
-    pausedRef.current = next;
-    setPaused(next);
-    if (next) {
-      setMessage('已暂停采集：当前轮次结束后不再开始新轮次');
-      return;
-    }
+  const pause = useCallback(() => {
+    if (pausedRef.current) return;
+    pausedRef.current = true;
+    setPaused(true);
+    setMessage('已暂停采集：当前轮次结束后不再开始新轮次');
+  }, []);
+
+  const resume = useCallback(() => {
+    if (!pausedRef.current) return;
+    pausedRef.current = false;
+    setPaused(false);
     setMessage(busyRef.current ? '已恢复采集（当前轮次进行中）' : '已恢复采集，正在补跑一轮…');
     void collectNow();
   }, [collectNow]);
 
-  return { states, busy, paused, message, collectNow, togglePause, refresh };
+  const togglePause = useCallback(() => {
+    if (pausedRef.current) {
+      resume();
+    } else {
+      pause();
+    }
+  }, [pause, resume]);
+
+  const isPaused = useCallback(() => pausedRef.current, []);
+  const isBusy = useCallback(() => busyRef.current, []);
+
+  return {
+    states,
+    busy,
+    paused,
+    message,
+    collectNow,
+    togglePause,
+    pause,
+    resume,
+    isPaused,
+    isBusy,
+    refresh,
+  };
 }

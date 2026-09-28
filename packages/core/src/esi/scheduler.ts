@@ -58,9 +58,9 @@ interface QueuedTask {
  */
 export class RequestScheduler {
   private readonly clock: Clock;
-  private readonly baseRate: number;
-  private readonly burst: number;
-  private readonly maxConcurrent: number;
+  private baseRate: number;
+  private burst: number;
+  private maxConcurrent: number;
   private readonly maxAttempts: number;
   private readonly lowErrorBudget: number;
   private readonly onObserve: SchedulerOptions['onObserve'];
@@ -139,6 +139,38 @@ export class RequestScheduler {
 
   get paused(): boolean {
     return this.isPaused;
+  }
+
+  /** 当前生效的限流参数（供「临时提档」前保存、结束后还原） */
+  get limits(): { requestsPerSecond: number; burst: number; maxConcurrent: number } {
+    return { requestsPerSecond: this.baseRate, burst: this.burst, maxConcurrent: this.maxConcurrent };
+  }
+
+  /**
+   * 临时调整基础速率 / 令牌桶容量 / 并发上限（如「历史全量初始化」独占期提档）。
+   *
+   * 必须改 `baseRate` 而非只改瞬时 `rate`：`observe()` 在预算健康时会把速率重置为
+   * `baseRate`，只改 `rate` 会被下一次响应打回。结束时应以 `limits` 取原值还原。
+   */
+  applyLimits(limits: {
+    requestsPerSecond?: number;
+    burst?: number;
+    maxConcurrent?: number;
+  }): void {
+    if (limits.requestsPerSecond !== undefined) {
+      this.baseRate = Math.max(0.1, limits.requestsPerSecond);
+      this.setRate(this.baseRate);
+    }
+    if (limits.burst !== undefined) {
+      const next = Math.max(1, limits.burst);
+      // 扩容时立即填满令牌桶，缩容时不超过新容量
+      this.tokens = next > this.burst ? next : Math.min(this.tokens, next);
+      this.burst = next;
+    }
+    if (limits.maxConcurrent !== undefined) {
+      this.maxConcurrent = Math.max(1, limits.maxConcurrent);
+    }
+    this.pump();
   }
 
   get stats(): QueueStats {

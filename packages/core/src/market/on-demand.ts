@@ -18,13 +18,15 @@ import { computeMarketStats } from './stats';
 export const ONDEMAND_TTL_MS = 5 * 60_000;
 
 /**
- * 日线历史的本地保留天数（P5-2.7）。
+ * 日线历史的本地保留天数（P5-2.8 由 90 放宽到 400）。
  *
- * 价差历史校验只用「30 天均价锚 + 近 7 天窗口」，90 天足够覆盖；而 ESI 端点虽返回
- * 约 400 天，整段存储会让库体积与每轮写入量放大 4 倍以上（配合增量写入一起收敛）。
+ * ESI 日线端点自带约 400 天，全量初始化按此窗口落库，使历史校验与行情页价格图
+ * 都拿到完整历史。代价：终态约 1,400 万行（约 3.65 万对 × ~390 行）/ GB 级库体积，
+ * 由「仅手动初始化 + 增量写入」控制写入量。
+ *
  * 注意：行情页价格图读的就是本表，因此图表历史长度 = 本常量。
  */
-export const HISTORY_RETENTION_DAYS = 90;
+export const HISTORY_RETENTION_DAYS = 400;
 
 /** 行情模块运行依赖（由宿主注入） */
 export interface MarketDeps {
@@ -242,4 +244,21 @@ async function isHistoryFetchedToday(
 /** 保留窗口的起始日期（含），格式与 `market_history_daily.date` 一致（UTC `YYYY-MM-DD`） */
 export function historyRetentionCutoff(now: number): string {
   return new Date(now - HISTORY_RETENTION_DAYS * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * 全局裁剪：把 `market_history_daily` 收敛到保留窗口内（P5-2.7）。
+ *
+ * 为什么需要它（而不是只在写入路径裁）：被「当日已抓取」跳过的 pair 根本不进写入路径，
+ * 单靠 per-pair 裁剪永远清不掉它们的历史遗留（升级前的旧窗口数据）。
+ * 单条 SQL、一次写事务；日常只影响滚出窗口的少量行。
+ *
+ * 裁剪失败不影响主流程（吞掉异常，下一轮 / 下次启动再试）。
+ */
+export async function pruneHistoryWindow(db: DbAdapter, now: number): Promise<void> {
+  try {
+    await db.execute('DELETE FROM market_history_daily WHERE date < ?', [historyRetentionCutoff(now)]);
+  } catch {
+    // 裁剪失败不影响主流程
+  }
 }

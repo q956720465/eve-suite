@@ -44,6 +44,7 @@ export {
   HISTORY_RETENTION_DAYS,
   ONDEMAND_TTL_MS,
   historyRetentionCutoff,
+  pruneHistoryWindow,
   refreshTypeHistory,
   refreshTypeOrders,
 } from './on-demand';
@@ -112,12 +113,16 @@ export type {
   HistoryBackfillTier,
 } from './history-backfill-state';
 
-export { HISTORY_BACKFILL_RATE_PER_SECOND, HistoryBackfill } from './history-backfill';
-export type {
-  HistoryBackfillOptions,
-  HistoryBackfillProgress,
-  HistoryBackfillSummary,
-} from './history-backfill';
+export {
+  HISTORY_INIT_BURST,
+  HISTORY_INIT_CONCURRENCY,
+  HISTORY_INIT_MAX_CONCURRENT,
+  HISTORY_INIT_RATE_PER_SECOND,
+  HISTORY_INIT_WRITE_BATCH_PAIRS,
+  HISTORY_INIT_WRITE_QUEUE_LIMIT,
+  HistoryInitializer,
+} from './history-init';
+export type { HistoryInitOptions, HistoryInitProgress, HistoryInitSummary } from './history-init';
 
 export { getCollectStates, getDailyHistory, getOrderBook, getTypeStats, getTypeStatsAcrossHubs } from './repo';
 export type {
