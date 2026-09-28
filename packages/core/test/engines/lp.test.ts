@@ -118,6 +118,7 @@ describe('rankLpOffers', () => {
     const ranking = await rankLpOffers(db, CEP_FORCE);
 
     expect(ranking.skippedAkOffers).toBe(1);
+    expect(ranking.unpricedOutputOffers).toBe(1); // offer 4 产出无报价
     expect(ranking.offers.map((offer) => offer.offerId)).toEqual([1, 2, 3, 6, 4]);
     expect(ranking.offers.map((offer) => offer.iskPerLp)).toEqual([5, 1, 0.7, null, null]);
   });
@@ -136,9 +137,11 @@ describe('rankLpOffers', () => {
 
     const filtered = await rankLpOffers(db, CEP_FORCE, { minIskPerLp: 1 });
     expect(filtered.offers.map((offer) => offer.offerId)).toEqual([1, 2]);
+    expect(filtered.unpricedOutputOffers).toBe(1); // 计数不受 minIskPerLp / limit 影响
 
     const limited = await rankLpOffers(db, CEP_FORCE, { limit: 2 });
     expect(limited.offers.map((offer) => offer.offerId)).toEqual([1, 2]);
+    expect(limited.unpricedOutputOffers).toBe(1);
   });
 
   it('无报价军团返回空排名', async () => {
@@ -146,7 +149,12 @@ describe('rankLpOffers', () => {
 
     const ranking = await rankLpOffers(db, AMARR_NAVY);
 
-    expect(ranking).toEqual({ corporationId: AMARR_NAVY, offers: [], skippedAkOffers: 0 });
+    expect(ranking).toEqual({
+      corporationId: AMARR_NAVY,
+      offers: [],
+      skippedAkOffers: 0,
+      unpricedOutputOffers: 0,
+    });
   });
 });
 
@@ -162,7 +170,12 @@ describe('buildLpPortfolio', () => {
 
     expect(portfolio.map((entry) => entry.corporationId)).toEqual([CEP_FORCE, AMARR_NAVY]);
     const [best, second] = portfolio;
-    expect(best).toMatchObject({ loyaltyPoints: 100_000, totalNetIsk: 500_000, offersRanked: 5 });
+    expect(best).toMatchObject({
+      loyaltyPoints: 100_000,
+      totalNetIsk: 500_000,
+      offersRanked: 5,
+      unpricedOutputOffers: 1,
+    });
     expect(best.bestOffer?.offerId).toBe(1);
     expect(best.alternatives.map((offer) => offer.offerId)).toEqual([2, 3]);
     expect(second).toMatchObject({ loyaltyPoints: 10_000, totalNetIsk: 300_000 });

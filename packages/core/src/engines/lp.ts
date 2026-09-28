@@ -57,6 +57,11 @@ export interface LpOfferRanking {
   offers: LpOfferValuation[];
   /** 因 `ak_cost > 0` 被跳过的条数（仅默认口径下计数） */
   skippedAkOffers: number;
+  /**
+   * 产出无市场报价、因而无法计算 ISK/LP 的条数（不受 limit / minIskPerLp 影响）。
+   * 多为蓝图类产出（BPC 无市场报价）——估值口径待定，见 DEV_STATUS「已知待办」。
+   */
+  unpricedOutputOffers: number;
 }
 
 export interface LpPortfolioEntry {
@@ -72,6 +77,8 @@ export interface LpPortfolioEntry {
   /** 参与排名的 offer 条数 */
   offersRanked: number;
   skippedAkOffers: number;
+  /** 产出无市场报价、无法估值的条数（多为蓝图类产出） */
+  unpricedOutputOffers: number;
 }
 
 /** 估值上下文：一次性取价，避免逐条 offer 查询 */
@@ -174,7 +181,9 @@ export async function rankLpOffers(
   const candidates = includeAk ? all : all.filter((offer) => offer.akCost === 0);
 
   const prices = await buildPriceIndex(db, candidates, options);
-  let ranked = candidates.map((offer) => valueOffer(offer, prices)).sort(compareOffers);
+  const valued = candidates.map((offer) => valueOffer(offer, prices));
+  const unpricedOutputOffers = valued.filter((offer) => !offer.outputPriced).length;
+  let ranked = [...valued].sort(compareOffers);
   const minIskPerLp = options.minIskPerLp;
   if (minIskPerLp !== undefined) {
     ranked = ranked.filter((offer) => offer.iskPerLp !== null && offer.iskPerLp >= minIskPerLp);
@@ -185,6 +194,7 @@ export async function rankLpOffers(
     corporationId,
     offers: ranked,
     skippedAkOffers: includeAk ? 0 : all.length - candidates.length,
+    unpricedOutputOffers,
   };
 }
 
@@ -213,6 +223,7 @@ export async function buildLpPortfolio(
         alternatives: ranking.offers.slice(1, 3),
         offersRanked: ranking.offers.length,
         skippedAkOffers: ranking.skippedAkOffers,
+        unpricedOutputOffers: ranking.unpricedOutputOffers,
       };
     }),
   );
