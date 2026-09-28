@@ -40,7 +40,13 @@ export type {
   GlobalScannerOptions,
 } from './global';
 
-export { ONDEMAND_TTL_MS, refreshTypeHistory, refreshTypeOrders } from './on-demand';
+export {
+  HISTORY_RETENTION_DAYS,
+  ONDEMAND_TTL_MS,
+  historyRetentionCutoff,
+  refreshTypeHistory,
+  refreshTypeOrders,
+} from './on-demand';
 export type { HistoryRefreshResult, MarketDeps, TypeRefreshResult } from './on-demand';
 
 export { HISTORY_COLUMNS, ORDER_COLUMNS, STATS_COLUMNS, WRITE_BATCH_ROWS } from './rows';

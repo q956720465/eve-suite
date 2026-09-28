@@ -8,6 +8,7 @@ import {
   HISTORY_BACKFILL_REGION_IDS,
   HistoryBackfill,
   countBackfillPairs,
+  historyRetentionCutoff,
   isBackfillDue,
   isBackfillInterrupted,
   listBackfillPairs,
@@ -378,5 +379,33 @@ describe('枢纽历史预拉 HistoryBackfill', () => {
 
     expect(clock.sleeps).toEqual([200, 200, 200]);
     expect(summary.elapsedMs).toBe(600);
+  });
+
+  it('轮次裁剪：窗口外的历史行被清理，被跳过的 pair 也不例外', async () => {
+    const { db, http, clock, client, scheduler } = await setup();
+    await seedStats(db, HUB_A, 1);
+
+    const today = new Date(clock.now()).toISOString();
+    const stale = new Date(
+      Date.parse(historyRetentionCutoff(clock.now())) - 86_400_000,
+    ).toISOString().slice(0, 10);
+    const insert = (date: string) =>
+      db.execute(
+        `INSERT INTO market_history_daily
+           (region_id, type_id, date, average, highest, lowest, order_count, volume, fetched_at)
+         VALUES (?, ?, ?, 1, 1, 1, 1, 1, ?)`,
+        [HUB_A, 1, date, today],
+      );
+    await insert('2026-09-26'); // 窗口内（且 fetched_at=今天 → 该 pair 会被跳过）
+    await insert(stale); // 窗口外的历史遗留
+    expect(await countRows(db, 'market_history_daily')).toBe(2);
+
+    const backfill = backfillOf({ db, clock, client, scheduler });
+    const summary = await backfill.runScan({ force: true });
+
+    expect(summary.pairsSkipped).toBe(1); // 当日已抓取 → 零请求
+    expect(http.calls).toHaveLength(0);
+    const rows = await db.select<{ date: string }>('SELECT date FROM market_history_daily');
+    expect(rows.map((row) => row.date)).toEqual(['2026-09-26']); // 窗口外那行已被裁掉
   });
 });

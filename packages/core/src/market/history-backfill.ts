@@ -16,7 +16,7 @@ import {
   type HistoryBackfillStatus,
   type HistoryBackfillTier,
 } from './history-backfill-state';
-import { refreshTypeHistory, type MarketDeps } from './on-demand';
+import { historyRetentionCutoff, refreshTypeHistory, type MarketDeps } from './on-demand';
 
 /**
  * 枢纽历史基线预拉（P5-2.6）。
@@ -168,6 +168,10 @@ export class HistoryBackfill {
     let firstError: string | null = null;
     let aborted = false;
 
+    // 轮次开始即收敛一次：清理升级前遗留的窗口外行（被跳过的 pair 不会走写入路径，
+    // 而整轮可能跑很久，等到收尾才裁会让库体积长时间偏大）
+    await this.pruneHistoryWindow(startedAt);
+
     for (let index = 0; index < pairs.length; index += 1) {
       if (this.isPausedNow()) {
         aborted = true;
@@ -203,6 +207,8 @@ export class HistoryBackfill {
     }
 
     const finishedAt = this.clock.now();
+    await this.pruneHistoryWindow(finishedAt);
+
     const processed = pairsOk + pairsSkipped + pairsFailed;
     const allOk = pairsFailed === 0 && processed === pairs.length;
     const retryDueAt = allOk
@@ -251,6 +257,23 @@ export class HistoryBackfill {
     const targetAt = startedAt + (processed * 1000) / this.ratePerSecond;
     const wait = targetAt - this.clock.now();
     if (wait > 0) await this.clock.sleep(wait);
+  }
+
+  /**
+   * 全局裁剪：把 `market_history_daily` 收敛到保留窗口内（P5-2.7）。
+   *
+   * 为什么需要它（而不是只在写入路径裁）：被「当日已抓取」跳过的 pair 根本不进写入路径，
+   * 单靠 per-pair 裁剪永远清不掉它们的历史遗留（升级前的 400 天数据）。
+   * 单条 SQL、一次写事务；日常只影响滚出窗口的少量行。
+   */
+  private async pruneHistoryWindow(now: number): Promise<void> {
+    try {
+      await this.db.execute('DELETE FROM market_history_daily WHERE date < ?', [
+        historyRetentionCutoff(now),
+      ]);
+    } catch {
+      // 裁剪失败不影响主流程（下一轮再试）
+    }
   }
 
   private isPausedNow(): boolean {

@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { EsiClient } from '../../src/esi/client';
 import { RequestScheduler } from '../../src/esi/scheduler';
 import type { MarketOrder } from '../../src/esi/types';
-import { refreshTypeHistory, refreshTypeOrders } from '../../src/market/on-demand';
+import {
+  HISTORY_RETENTION_DAYS,
+  refreshTypeHistory,
+  refreshTypeOrders,
+} from '../../src/market/on-demand';
 import { getOrderBook, getTypeStats } from '../../src/market/repo';
 import { countRows, createMigratedDb } from '../helpers/db';
 import { createFakeClock } from '../helpers/fake-clock';
@@ -202,5 +206,120 @@ describe('日线历史刷新', () => {
 
     expect(forced.skipped).toBe(false);
     expect(http.calls).toHaveLength(2);
+  });
+});
+
+/** 保留窗口的起始日期（含）与「窗口外一天」，用于边界构造 */
+const CUTOFF = new Date(T0 - HISTORY_RETENTION_DAYS * 86_400_000).toISOString().slice(0, 10);
+const BEFORE_CUTOFF = new Date(Date.parse(CUTOFF) - 86_400_000).toISOString().slice(0, 10);
+
+/** 构造一条日线（端点返回形状） */
+function day(date: string, average: number) {
+  return { date, average, highest: average + 1, lowest: average - 1, order_count: 10, volume: 100 };
+}
+
+describe('日线历史：增量写入与保留窗口（P5-2.7）', () => {
+  it('次日刷新：只增量写入新增日期（含当天覆盖），不整段重写', async () => {
+    const { db, http, deps } = await setup();
+    http.enqueue(jsonResponse(200, [day('2026-09-25', 4.2), day('2026-09-26', 4.3)]));
+    await refreshTypeHistory(deps, REGION, TYPE, { now: T0 });
+    expect(await countRows(db, 'market_history_daily')).toBe(2);
+
+    // 次日端点仍返回全段，但只有最后一天是新的
+    http.enqueue(
+      jsonResponse(200, [day('2026-09-25', 4.2), day('2026-09-26', 4.3), day('2026-09-27', 4.4)]),
+    );
+    const nextDay = await refreshTypeHistory(deps, REGION, TYPE, { now: T0 + 24 * 3600_000 });
+
+    // 只写「>= 本地最新日期（09-26）」的行：09-26 覆盖 + 09-27 新增（而不是 3 行）
+    expect(nextDay.daysWritten).toBe(2);
+    expect(await countRows(db, 'market_history_daily')).toBe(3);
+  });
+
+  it('重拉时以最新日期为界覆盖当天行，更早的行不动', async () => {
+    const { db, http, deps } = await setup();
+    http.enqueue(jsonResponse(200, [day('2026-09-25', 4.2), day('2026-09-26', 4.3)]));
+    await refreshTypeHistory(deps, REGION, TYPE, { now: T0 });
+
+    // 当天数据在盘中会变：09-26 的均价被更新，09-25 不变
+    http.enqueue(jsonResponse(200, [day('2026-09-25', 9.9), day('2026-09-26', 5.5)]));
+    const again = await refreshTypeHistory(deps, REGION, TYPE, { force: true, now: T0 });
+
+    expect(again.daysWritten).toBe(1); // 只有 09-26
+    const rows = await db.select<{ date: string; average: number }>(
+      'SELECT date, average FROM market_history_daily ORDER BY date',
+    );
+    expect(rows).toEqual([
+      { date: '2026-09-25', average: 4.2 },
+      { date: '2026-09-26', average: 5.5 },
+    ]);
+  });
+
+  it('保留窗口：超出窗口的日线不入库', async () => {
+    const { db, http, deps } = await setup();
+    http.enqueue(
+      jsonResponse(200, [
+        day(BEFORE_CUTOFF, 1),
+        day(CUTOFF, 2), // 边界：保留
+        day('2026-09-26', 4.3),
+      ]),
+    );
+
+    const result = await refreshTypeHistory(deps, REGION, TYPE, { now: T0 });
+
+    expect(result.daysWritten).toBe(2);
+    const earliest = await db.select<{ earliest: string }>(
+      'SELECT MIN(date) AS earliest FROM market_history_daily',
+    );
+    expect(earliest[0]?.earliest).toBe(CUTOFF);
+  });
+
+  it('刷新时删除已滚出窗口的历史行', async () => {
+    const { db, http, deps } = await setup();
+    await db.execute(
+      `INSERT INTO market_history_daily
+         (region_id, type_id, date, average, highest, lowest, order_count, volume, fetched_at)
+       VALUES (?, ?, ?, 1, 1, 1, 1, 1, '2026-01-01T00:00:00Z')`,
+      [REGION, TYPE, BEFORE_CUTOFF],
+    );
+
+    http.enqueue(jsonResponse(200, [day('2026-09-26', 4.3)]));
+    await refreshTypeHistory(deps, REGION, TYPE, { now: T0 });
+
+    expect(await countRows(db, 'market_history_daily')).toBe(1); // 旧行被裁掉，只剩新行
+  });
+
+  it('无待写日期时：只刷新抓取时间，不重复写数据行', async () => {
+    const { db, http, deps } = await setup();
+    http.enqueue(jsonResponse(200, [day('2026-09-26', 4.3)]));
+    await refreshTypeHistory(deps, REGION, TYPE, { now: T0 });
+
+    // 端点只回更早的日期（数据回滚 / 延迟）→ 无「>= 本地最新」的行
+    http.enqueue(jsonResponse(200, [day('2026-09-25', 4.2)]));
+    const result = await refreshTypeHistory(deps, REGION, TYPE, {
+      force: true,
+      now: T0 + 3600_000,
+    });
+
+    expect(result.daysWritten).toBe(0);
+    const rows = await db.select<{ date: string; average: number; fetched: string }>(
+      'SELECT date, average, fetched_at AS fetched FROM market_history_daily',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.date).toBe('2026-09-26'); // 数据未被更旧的行覆盖
+    expect(rows[0]?.fetched).toBe(new Date(T0 + 3600_000).toISOString()); // 但抓取时间已刷新
+  });
+
+  it('窗口内无数据：清空该 pair', async () => {
+    const { db, http, deps } = await setup();
+    http.enqueue(jsonResponse(200, [day('2026-09-26', 4.3)]));
+    await refreshTypeHistory(deps, REGION, TYPE, { now: T0 });
+    expect(await countRows(db, 'market_history_daily')).toBe(1);
+
+    http.enqueue(jsonResponse(200, []));
+    const cleared = await refreshTypeHistory(deps, REGION, TYPE, { force: true, now: T0 });
+
+    expect(cleared.daysWritten).toBe(0);
+    expect(await countRows(db, 'market_history_daily')).toBe(0);
   });
 });

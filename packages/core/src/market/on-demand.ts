@@ -17,6 +17,15 @@ import { computeMarketStats } from './stats';
 /** 按需数据的默认新鲜度阈值：5 分钟（与枢纽层采集节奏一致） */
 export const ONDEMAND_TTL_MS = 5 * 60_000;
 
+/**
+ * 日线历史的本地保留天数（P5-2.7）。
+ *
+ * 价差历史校验只用「30 天均价锚 + 近 7 天窗口」，90 天足够覆盖；而 ESI 端点虽返回
+ * 约 400 天，整段存储会让库体积与每轮写入量放大 4 倍以上（配合增量写入一起收敛）。
+ * 注意：行情页价格图读的就是本表，因此图表历史长度 = 本常量。
+ */
+export const HISTORY_RETENTION_DAYS = 90;
+
 /** 行情模块运行依赖（由宿主注入） */
 export interface MarketDeps {
   db: DbAdapter;
@@ -129,8 +138,21 @@ export async function refreshTypeHistory(
     return { regionId, typeId, daysWritten: 0, skipped: true };
   }
 
-  const entries = result.data ?? [];
-  const rows: unknown[][] = entries.map((entry) => [
+  // 只保留窗口内的日线（P5-2.7）：端点返回约 400 天，但校验只需 30 天锚 + 近 7 天窗口
+  const cutoff = historyRetentionCutoff(now);
+  const kept = (result.data ?? []).filter((entry) => entry.date >= cutoff);
+
+  // 增量写入：先取本地最新日期，只写「>= 它」的行（含当天，故当天数据会被刷新覆盖）。
+  // 日常通常 1~2 行，而不是整段 400 行 —— 这是把「每轮千万行写入 + 上万个持锁事务」
+  // 收敛到「万行级」的关键，也是与枢纽整区替换争抢写锁的根因所在。
+  const maxRows = await deps.db.select<{ maxDate: string | null }>(
+    'SELECT MAX(date) AS maxDate FROM market_history_daily WHERE region_id = ? AND type_id = ?',
+    [regionId, typeId],
+  );
+  const maxDate = maxRows[0]?.maxDate ?? null;
+  const fresh = maxDate === null ? kept : kept.filter((entry) => entry.date >= maxDate);
+
+  const rows: unknown[][] = fresh.map((entry) => [
     regionId,
     typeId,
     entry.date,
@@ -143,11 +165,36 @@ export async function refreshTypeHistory(
   ]);
 
   await deps.db.transaction(async (tx) => {
-    await tx.execute('DELETE FROM market_history_daily WHERE region_id = ? AND type_id = ?', [
-      regionId,
-      typeId,
-    ]);
-    await insertRows(tx, 'market_history_daily', HISTORY_COLUMNS, rows, WRITE_BATCH_ROWS);
+    if (kept.length === 0) {
+      // 窗口内无数据（该物品在此区已无成交）：清空该 pair，与「空历史」语义一致
+      await tx.execute('DELETE FROM market_history_daily WHERE region_id = ? AND type_id = ?', [
+        regionId,
+        typeId,
+      ]);
+    } else {
+      if (rows.length > 0) {
+        await insertRows(tx, 'market_history_daily', HISTORY_COLUMNS, rows, WRITE_BATCH_ROWS, {
+          target: ['region_id', 'type_id', 'date'],
+          update: HISTORY_COLUMNS.filter(
+            (column) => column !== 'region_id' && column !== 'type_id' && column !== 'date',
+          ),
+        });
+      } else {
+        // 无待写日期：仅刷新最新一行的 fetched_at —— 「当日已抓取」判据只看这一行
+        await tx.execute(
+          `UPDATE market_history_daily SET fetched_at = ?
+            WHERE region_id = ? AND type_id = ?
+              AND date = (SELECT MAX(date) FROM market_history_daily
+                           WHERE region_id = ? AND type_id = ?)`,
+          [fetchedAt, regionId, typeId, regionId, typeId],
+        );
+      }
+      // 裁剪滚出窗口的旧行（首次由 400 天收敛到 90 天时会删除约 310 行）
+      await tx.execute(
+        'DELETE FROM market_history_daily WHERE region_id = ? AND type_id = ? AND date < ?',
+        [regionId, typeId, cutoff],
+      );
+    }
 
     if (result.etag !== null) {
       await saveEtags(tx, new Map([[scope, result.etag]]), fetchedAt);
@@ -190,4 +237,9 @@ async function isHistoryFetchedToday(
   );
   const fetchedAt = rows[0]?.fetched_at;
   return fetchedAt !== undefined && fetchedAt.slice(0, 10) === today;
+}
+
+/** 保留窗口的起始日期（含），格式与 `market_history_daily.date` 一致（UTC `YYYY-MM-DD`） */
+export function historyRetentionCutoff(now: number): string {
+  return new Date(now - HISTORY_RETENTION_DAYS * 86_400_000).toISOString().slice(0, 10);
 }
