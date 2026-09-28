@@ -33,7 +33,6 @@ export function useMarketCollector(): MarketCollectorHandle {
   const [message, setMessage] = useState('');
 
   const collectorRef = useRef<MarketCollector | null>(null);
-  const schedulerRef = useRef<RequestScheduler | null>(null);
   const busyRef = useRef(false);
   const pausedRef = useRef(false);
 
@@ -44,7 +43,8 @@ export function useMarketCollector(): MarketCollectorHandle {
 
   const collectNow = useCallback(async () => {
     const collector = collectorRef.current;
-    if (collector === null || busyRef.current) return;
+    // 暂停 = 不开始新一轮（在途轮次不受影响，见 togglePause 注释）
+    if (collector === null || busyRef.current || pausedRef.current) return;
 
     busyRef.current = true;
     setBusy(true);
@@ -97,7 +97,6 @@ export function useMarketCollector(): MarketCollectorHandle {
             setMessage(`采集区域 ${progress.regionId}：${progress.page}/${progress.pages} 页`),
         });
 
-        schedulerRef.current = scheduler;
         collectorRef.current = collector;
 
         await refresh();
@@ -123,20 +122,23 @@ export function useMarketCollector(): MarketCollectorHandle {
     return () => clearInterval(timer);
   }, [collectNow]);
 
+  /**
+   * 暂停/恢复采集（**轮次级**）。
+   *
+   * 不能改成请求调度器级暂停：在途轮次已把整页请求排入队列，请求级暂停会把它们永远压住，
+   * 轮次不结束、`busy` 不复位（现象：暂停后「采集中…」长期不变）。故只拦「新一轮开始」。
+   */
   const togglePause = useCallback(() => {
-    setPaused((previous) => {
-      const next = !previous;
-      pausedRef.current = next;
-      if (next) {
-        schedulerRef.current?.pause();
-        setMessage('已暂停采集（不再发起新请求）');
-      } else {
-        schedulerRef.current?.resume();
-        setMessage('已恢复采集');
-      }
-      return next;
-    });
-  }, []);
+    const next = !pausedRef.current;
+    pausedRef.current = next;
+    setPaused(next);
+    if (next) {
+      setMessage('已暂停采集：当前轮次结束后不再开始新轮次');
+      return;
+    }
+    setMessage(busyRef.current ? '已恢复采集（当前轮次进行中）' : '已恢复采集，正在补跑一轮…');
+    void collectNow();
+  }, [collectNow]);
 
   return { states, busy, paused, message, collectNow, togglePause, refresh };
 }

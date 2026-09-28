@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 import { runMigrations, type MigrateResult } from './migrate';
 import { MIGRATIONS } from './migrations';
+import { retryOnBusy } from './retry';
 import type { DbAdapter } from './types';
 
 export interface DatabaseInitResult extends MigrateResult {
@@ -44,7 +45,8 @@ async function doInit(): Promise<DatabaseInitResult> {
 function createAdapter(): DbAdapter {
   return {
     async execute(sql: string, params: readonly unknown[] = []): Promise<void> {
-      await invoke<number>('db_execute', { sql, params: [...params], txId: null });
+      // 事务外的单语句写入：瞬时锁可安全重试（SQLITE_BUSY 时语句未执行）
+      await retryOnBusy(() => invoke<number>('db_execute', { sql, params: [...params], txId: null }));
     },
 
     async select<T>(sql: string, params: readonly unknown[] = []): Promise<T[]> {
@@ -52,7 +54,9 @@ function createAdapter(): DbAdapter {
     },
 
     async transaction<T>(work: (tx: DbAdapter) => Promise<T>): Promise<T> {
-      const txId = await invoke<number>('db_tx_begin');
+      // 只对「开启事务」重试（拿写锁失败时事务尚未开始）；事务体内不重试，
+      // 超时即整体失败，由调用方按事务语义重来
+      const txId = await retryOnBusy(() => invoke<number>('db_tx_begin'));
       try {
         const result = await work(createTransactionAdapter(txId));
         await invoke<unknown>('db_tx_end', { txId, commit: true });

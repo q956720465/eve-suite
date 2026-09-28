@@ -163,20 +163,30 @@ export class MarketCollector {
       requests += refilled.length;
     }
 
-    const orders: MarketOrder[] = [];
+    const rawOrders: MarketOrder[] = [];
     for (const page of pages) {
-      if (page !== null) orders.push(...page);
+      if (page !== null) rawOrders.push(...page);
     }
 
-    const fetchedAt = new Date(this.clock.now()).toISOString();
-    const stats = computeMarketStats(orders, regionId, fetchedAt);
+    // 按 order_id 去重（保留最后一次出现）：实时行情下「304 探针 + 无条件下重拉补齐」
+    // 是两次不同时刻取样，订单可能跨页漂移而被两份页同时包含，而 market_orders.order_id
+    // 是单列主键 —— 重复行会让整个区域的替换事务失败（踩坑：UNIQUE constraint failed）
+    const uniqueOrders = [...new Map(rawOrders.map((order) => [order.order_id, order])).values()];
 
-    const orderRows: unknown[][] = orders.map((order) => toOrderRow(order, regionId, fetchedAt));
+    const fetchedAt = new Date(this.clock.now()).toISOString();
+    const stats = computeMarketStats(uniqueOrders, regionId, fetchedAt);
+
+    const orderRows: unknown[][] = uniqueOrders.map((order) =>
+      toOrderRow(order, regionId, fetchedAt),
+    );
     const statsRows: unknown[][] = stats.map(toStatsRow);
 
     await this.db.transaction(async (tx) => {
       await tx.execute('DELETE FROM market_orders WHERE region_id = ?', [regionId]);
-      await insertRows(tx, 'market_orders', ORDER_COLUMNS, orderRows, WRITE_BATCH_ROWS);
+      await insertRows(tx, 'market_orders', ORDER_COLUMNS, orderRows, WRITE_BATCH_ROWS, {
+        target: ['order_id'],
+        update: ORDER_COLUMNS.filter((column) => column !== 'order_id'),
+      });
 
       await tx.execute('DELETE FROM market_stats WHERE region_id = ?', [regionId]);
       await insertRows(tx, 'market_stats', STATS_COLUMNS, statsRows, WRITE_BATCH_ROWS);

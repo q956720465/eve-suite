@@ -185,4 +185,64 @@ describe('枢纽层采集器', () => {
     expect(state[0].last_ok_at).not.toBeNull();
     expect(state[0].last_error).toBeNull();
   });
+
+  it('跨页重复 order_id：去重后仍整区替换成功（不因主键冲突整轮失败）', async () => {
+    const { db, http, collector } = await setup();
+    // 实时行情下「304 探针 + 补齐页」是两次不同时刻取样，同一订单可能被两份页同时包含
+    http.enqueue(
+      jsonResponse(
+        200,
+        [
+          order({ order_id: 1, type_id: 34, price: 5, is_buy_order: false }),
+          order({ order_id: 2, type_id: 34, price: 6, is_buy_order: false }),
+        ],
+        { 'x-pages': '2', etag: 'W/"p1"' },
+      ),
+    );
+    http.enqueue(
+      jsonResponse(
+        200,
+        [
+          order({ order_id: 2, type_id: 34, price: 6.5, is_buy_order: false }),
+          order({ order_id: 3, type_id: 35, price: 9, is_buy_order: false }),
+        ],
+        { etag: 'W/"p2"' },
+      ),
+    );
+
+    const result = await collector.collectRegion(REGION);
+
+    expect(result.error).toBeNull();
+    expect(result.ordersWritten).toBe(3);
+    expect(await countRows(db, 'market_orders')).toBe(3);
+
+    // 去重保留「最后一次出现」：order_id=2 取第 2 页的价格
+    const dup = await db.select<{ price: number }>(
+      'SELECT price FROM market_orders WHERE order_id = 2',
+    );
+    expect(dup[0].price).toBe(6.5);
+
+    // 聚合指标同样基于去重后的订单集（最低卖价 = 5）
+    const stats = await db.select<{ best_sell: number }>('SELECT best_sell FROM market_stats');
+    expect(stats[0].best_sell).toBe(5);
+  });
+
+  it('同一页内重复 order_id：去重后写入成功', async () => {
+    const { db, http, collector } = await setup();
+    http.enqueue(
+      jsonResponse(
+        200,
+        [
+          order({ order_id: 1, type_id: 34, price: 5, is_buy_order: false }),
+          order({ order_id: 1, type_id: 34, price: 5.5, is_buy_order: false }),
+        ],
+        { 'x-pages': '1', etag: 'W/"p1"' },
+      ),
+    );
+
+    const result = await collector.collectRegion(REGION);
+
+    expect(result.error).toBeNull();
+    expect(await countRows(db, 'market_orders')).toBe(1);
+  });
 });
