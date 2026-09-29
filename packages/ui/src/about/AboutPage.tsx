@@ -51,6 +51,54 @@ export default function AboutPage() {
     <>
       <div className="panel">
         <div className="panel-head">
+          <h2>许可与合规</h2>
+          <span className="hint">非官方第三方工具；遵守 EVE Online 第三方开发者政策</span>
+        </div>
+        <p className="hint">
+          <strong>
+            EVE Online 及相关商标、标识、游戏内素材的全部权利归 Fenris Creations（原 CCP Games）所有。
+          </strong>{' '}
+          本工具是<strong>非官方第三方工具</strong>，与 Fenris Creations 之间不存在隶属、赞助或背书关系；
+          名称中的「EVE」仅用于说明用途。
+        </p>
+        <table className="result">
+          <thead>
+            <tr>
+              <th>项目</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>数据来源</td>
+              <td>仅使用 EVE Online 官方公开的 ESI / SDE 接口，不使用任何非公开数据源</td>
+            </tr>
+            <tr>
+              <td>缓存合规</td>
+              <td>按官方要求遵循 Cache-Control / Expires 缓存，不重复拉取同一份数据</td>
+            </tr>
+            <tr>
+              <td>账号与数据</td>
+              <td>无服务端、无账号体系；不收集也不上传任何用户数据</td>
+            </tr>
+            <tr>
+              <td>本软件许可</td>
+              <td>MIT（见仓库 LICENSE 文件）</td>
+            </tr>
+            <tr>
+              <td>免责声明</td>
+              <td>价格、估值与统计结果均由本地数据推算，仅供参考；游戏内交易与决策风险自负</td>
+            </tr>
+          </tbody>
+        </table>
+        <p className="hint">
+          本项目遵守 EVE Online 第三方开发者政策与开发者许可协议。如权利方对本工具的使用方式有异议，
+          请联系仓库作者下线相关内容。
+        </p>
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
           <h2>版本与运行环境</h2>
           <span className="hint">版本号唯一真源为打包配置，构建期同步到各包，避免手工改动漂移</span>
         </div>
