@@ -23,7 +23,7 @@
 | **P5-5 采矿时薪** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 时薪测算器（速率 × 每 m³ 净精炼产值）+ 采矿账簿复盘（按 **EVE 日** 聚合，日界 = 停机 11:00 UTC）；计算页第 **6** 面板 |
 | **P5-6 工业成本闭环** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 工业任务 × 钱包流水（`industry_job_id`）两段对账：安装费「预算 vs 实际」偏差 + 材料预算→产出估值→**毛利闭环**；计算页第 **7** 面板 |
 | **P5-7 提醒系统** | ✅ 完成（真机 + 本地回环 Webhook 真实收包 + 加签独立复算一致） | 托盘通知（Tauri 插件）+ 通用 Webhook（钉钉 HMAC 加签 / 企业微信 / 飞书 / 自定义）+ Undercut 规则 + 监视列表价格带 + 静默时段 + 6h 冷却去重；迁移 **v10**（`notify_rules`）；顶层「提醒」页 |
-| **P6 分发打磨** | 🔄 进行中（P6-1 ~ P6-4、P6-6 完成） | 版本统一 + 「关于」页 + 合规与 LICENSE + 面向用户 README + **内置更新器** + **CI 补强（测试 447 / universal macOS / 更新清单）** ✅；仓库已公开、三平台 CI 全绿 ✅；**仅剩 P6-5 打包冒烟与托盘 Toast 复验**（按用户指示挂起） |
+| **P6 分发打磨** | 🔄 进行中（P6-1 ~ P6-4、P6-6 完成） | 版本统一 + 「关于」页 + 合规与 LICENSE + 面向用户 README + **内置更新器** + **CI 补强（测试 448 / universal macOS / 更新清单）** ✅；仓库已公开、三平台 CI 全绿 ✅；**仅剩 P6-5 打包冒烟与托盘 Toast 复验**（按用户指示挂起） |
 
 ## P0 子任务明细
 
@@ -658,7 +658,7 @@
 | **P6-3 用户文档** | ✅ 完成 | `README.md` 重写为**面向用户**（约 350 行）：这是什么 / 下载与安装（含 SmartScreen 与 Gatekeeper 处理）/ 首次使用四步 / 功能一览（按页签 + 计算页 7 子页签）/ **FAQ 11 题** / 数据与隐私 / 许可与合规；原开发者内容移至文末「开发者：技术栈与构建」 |
 | **P6-4 内置更新器** | ✅ 完成（真机验证 + 验签拦截验证） | `tauri-plugin-updater` + `tauri-plugin-process`（Rust 注册 + capabilities 加 `updater:default` / `process:default`）；`tauri.conf.json` 配 endpoints（GitHub Releases `latest.json`）与 pubkey；签名密钥对已生成（**私钥在仓库外** `%USERPROFILE%\.tauri\eve-suite.key`）；UI：`useUpdater`（启动 10s 静默检查、不自动安装）+ 「关于」页「软件更新」区块（检查 / 立即更新 / 进度 / 状态） |
 | P6-5 打包与真机冒烟 | 未开始 | `tauri build` 出 NSIS/MSI + 首次走查 + **托盘 Toast 复验** + 卸载验证 |
-| **P6-6 CI 补强** | ✅ 完成（本地校验 + 待推送验证） | ① 新增 `Run core tests`（**447** 单测）+ CI Node **22 → 24** ② macOS 改出 **universal 包**（`--target universal-apple-darwin`；`macos-13` 已退役）③ 新增 `src-tauri/tauri.updater.conf.json` + `scripts/build-latest-json.mjs`，tag 构建条件合并配置生成 `.sig` 与 `latest.json` ④ artifact 名与产物路径同步更新 |
+| **P6-6 CI 补强** | ✅ 完成（CI 已验证） | ① 新增 `Run core tests`（**448** 单测）+ CI Node **22 → 24** ② macOS 改出 **universal 包**（`--target universal-apple-darwin`；`macos-13` 已退役）③ 新增 `src-tauri/tauri.updater.conf.json` + `scripts/build-latest-json.mjs`，tag 构建条件合并配置生成 `.sig` 与 `latest.json` ④ artifact 名与产物路径同步更新 |
 
 **发布链路验证（2026-09-29）**：
 - **仓库已转公开**（用户操作）→ 内置更新器的生产端点（GitHub Releases 的 `latest.json`）已具备可用前提
@@ -753,10 +753,16 @@
   - `release` job 新增 **`Generate latest.json`**（`GITHUB_REF_NAME` 去 `v` 前缀作版本号、`github.server_url` + `repository` 拼下载前缀）；Release 资产含 `.sig` 与 `latest.json`
 - **待办（依赖用户）**：配 `TAURI_SIGNING_PRIVATE_KEY` Secret（不配则**仅 tag 发版会失败**）；**tag 发布流程本期未实测**（要真发版才有意义）
 - 未改应用代码（仅新增 `src-tauri/tauri.updater.conf.json` 一个覆盖配置文件）
+- **CI 首轮实测暴露并修复的缺陷（测试依赖本地时区）**：
+  - 首轮（run `36524451794`）**三平台全部卡在 `Run core tests` 失败** —— 根因是 `notify.test.ts` 的静默时段用例**把静默区间写死为 12–13**（按东八区假设），而 **CI runner 跑在 UTC**（`new Date(NOW).getHours()` = 4）→ 区间不覆盖当前小时 → 命中未被压制，断言失败
+  - **定位方式**：GitHub 的 job 日志下载 API 需要 admin 权限（403）→ 改用**本地复现**（`$env:TZ='UTC'` + 跑 core 测试），**一次命中**同一条用例（`expected [...] to have a length of +0 but got 1`）
+  - **修复**：测试改为**按运行时时区动态构造**静默区间（`[LOCAL_HOUR, LOCAL_HOUR+1)`），并**补一条反向用例**（非静默时段应正常发送）→ 用例数 **447 → 448**
+  - **双时区验证**：`TZ=UTC` 与本地（东八区）**均 43 文件 / 448 用例全绿**
+  - **未改生产代码**：`rules.ts` 的 `new Date(nowMs).getHours()`（按本地时区判定静默）本身语义正确，问题只在测试的隐含假设
 
 **P6-6 口径（已定，经用户确认）**：
 - **macOS 用 universal 包**（替代加 Intel runner）：一个 dmg 覆盖两种 Mac，且不依赖 2027 秋将被移除的 Intel runner；若 CI 上 universal 编译失败，退回「加 `macos-15-intel` 出第二个 dmg」
-- **CI 必须跑测试**（447 单测）→ 顺带把 CI Node 提到 **24**
+- **CI 必须跑测试**（448 单测）→ 顺带把 CI Node 提到 **24**
 - **更新器产物只在 tag 构建启用**（`--config` 条件合并）：保证日常 push 构建不依赖任何 Secret
 - **`latest.json` 自己生成**（不用 `tauri-apps/tauri-action`，避免它接管 Release 创建流程）
 - **不升级 action 大版本**（与开工清单的初步建议不同，说明理由）：第一方 actions 的 `@v4` tag 已由 GitHub 原地更新为 node24 运行时（当日 CI 全绿即为证），而各 action 的最新大版本号无法在本机离线核实 —— 改动版本号的风险大于收益
@@ -945,6 +951,11 @@
    - 对策（本次验证可用）：① `set_focus` 主窗口后观察，等到 **`document "EVE Suite"` 出现在主进程树内**（扁平形态）再按 id 操作；② 更稳：**截图坐标点击**（带截图的 `get_app_state` → `click { pid, element_id: 窗口根, x, y }`）。本次「资产」页签就是用坐标点击成功的。
    - 附带经验：应用被误关后 `tauri dev` 会**干净退出（exit 0）且无错误输出** —— 看到 exit 0 却没窗口，先怀疑「点到了关闭」（同 P4-5-1 的先例）。
    - 另：`<select>` 仍不能用 `set_value`；本次用 `perform_action { action: "expand" }` 展开后对 `list-item` 发 `perform_action { action: "select" }`，并回读 `val=` 验证（与踩坑 #32 一致）。
+
+43. **【P6-6 实测】测试里不要假设本地时区 —— CI runner 是 UTC，本机是东八区**：`notify.test.ts` 的静默时段用例把「静默区间」写死成 12–13（按东八区算的「当前小时」），本地全绿、**CI 三平台全红**（`new Date(NOW).getHours()` 在 UTC 下是 4，区间不覆盖当前小时 → 命中未被压制）。
+   - **对策**：凡按**本地时区**判定的分支（`getHours()` / `getDay()` / `toLocale*`），测试里都要**由运行时动态算出期望值**（如 `const LOCAL_HOUR = new Date(NOW).getHours()` 再构造区间），不要写死某时区的小时数。
+   - **判据**：本地绿而 CI 红、且失败用例与「时间 / 日期 / 时区」沾边 → 先用 `$env:TZ='UTC'` 复跑一遍（Node 认这个变量），往往一次命中。
+   - 附带：GitHub 的「下载 job 日志」API（`/actions/jobs/{id}/logs`）**即使仓库公开也需 admin 权限**（403）→ CI 失败时「本地复现」通常比翻日志更快。
 
 ## 关键文件地图
 

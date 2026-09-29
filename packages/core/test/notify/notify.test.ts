@@ -34,8 +34,16 @@ const CHAR = 2114553827;
 const TRITANIUM = 34;
 const VELDSPAR = 1230;
 
-/** 固定时刻：东八区 12:00（本地小时 = 12），让静默时段判定不随真实时间漂移 */
+/** 固定时刻：让日期与冷却断言不随真实时间漂移 */
 const NOW = Date.parse('2026-09-29T04:00:00Z');
+
+/**
+ * `NOW` 在**运行时时区**下的小时数。
+ *
+ * 静默时段判定用的是 `new Date(nowMs).getHours()`（本地时区），而 CI runner 跑在 **UTC**
+ * （本机是东八区）—— 所以静默区间必须**按运行时时区动态构造**，写死「12–13」会在 CI 上失效。
+ */
+const LOCAL_HOUR = new Date(NOW).getHours();
 
 async function insertSellOrder(
   db: DbAdapter,
@@ -280,12 +288,28 @@ describe('evaluateNotifyRules — 静默与冷却', () => {
     const db = await createMigratedDb();
     await insertStats(db, { regionId: JITA, typeId: TRITANIUM, p5Sell: 80 });
     await insertSellOrder(db, { orderId: 1, typeId: TRITANIUM, price: 100 });
-    await seedUndercutRule(db, { quietStartHour: 12, quietEndHour: 13 }); // NOW = 本地 12 点
+    // 区间取 [LOCAL_HOUR, LOCAL_HOUR+1)：无论运行时时区如何，NOW 都落在静默区间内
+    await seedUndercutRule(db, { quietStartHour: LOCAL_HOUR, quietEndHour: (LOCAL_HOUR + 1) % 24 });
 
     const result = await evaluateNotifyRules(db, { nowMs: NOW });
     expect(result.hits).toHaveLength(0);
     expect(result.quietSuppressed).toBe(1);
     expect(result.cooldownSuppressed).toBe(0);
+  });
+
+  it('非静默时段命中 → 正常发送（不被压制）', async () => {
+    const db = await createMigratedDb();
+    await insertStats(db, { regionId: JITA, typeId: TRITANIUM, p5Sell: 80 });
+    await insertSellOrder(db, { orderId: 1, typeId: TRITANIUM, price: 100 });
+    // 区间取 [LOCAL_HOUR+2, LOCAL_HOUR+3)：跨不跨夜都不包含 LOCAL_HOUR
+    await seedUndercutRule(db, {
+      quietStartHour: (LOCAL_HOUR + 2) % 24,
+      quietEndHour: (LOCAL_HOUR + 3) % 24,
+    });
+
+    const result = await evaluateNotifyRules(db, { nowMs: NOW });
+    expect(result.hits).toHaveLength(1);
+    expect(result.quietSuppressed).toBe(0);
   });
 
   it('冷却期内命中 → 计入 cooldownSuppressed；冷却超期后恢复发送', async () => {
