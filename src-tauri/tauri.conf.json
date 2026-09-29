@@ -36,5 +36,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/q956720465/eve-suite/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJERDYxQjg5Q0NBQThCOEEKUldTS2k2ck1pUnZXdlRMTnpaQzdUVGhFbmFBQ0RyRFpHcXpmRnUyVWtITUpub0RQQUxrNHh0UjAK"
+    }
   }
 }

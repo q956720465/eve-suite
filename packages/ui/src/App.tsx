@@ -4,6 +4,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
 
 import AboutPage from './about/AboutPage';
+import { useUpdater } from './about/useUpdater';
 import CalcPage from './calc/CalcPage';
 import { useLpStoreSync } from './lp/useLpStoreSync';
 import MarketPage from './market/MarketPage';
@@ -77,6 +78,9 @@ export default function App() {
 
   // 提醒引擎（P5-7）同样在应用级持有：每 60 秒评估规则，命中即推送（托盘 + 可选 Webhook）
   const notifyEngine = useNotifyEngine();
+
+  // 内置更新器（P6-4）：启动后延迟静默检查一次；发现新版本只在「关于」页提示，不自动安装
+  const updater = useUpdater();
 
   useEffect(() => {
     if (!characters.ready || characters.characters.length === 0) return;
@@ -162,7 +166,7 @@ export default function App() {
       {tab === 'assets' && <AssetsPage characters={characters} sync={personalSync} />}
       {tab === 'calc' && <CalcPage lpStore={lpStore} />}
       {tab === 'notify' && <NotifyPage engine={notifyEngine} />}
-      {tab === 'about' && <AboutPage />}
+      {tab === 'about' && <AboutPage updater={updater} />}
     </main>
   );
 }

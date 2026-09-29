@@ -12,6 +12,8 @@
   "dependencies": {
     "@eve-suite/core": "workspace:*",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-process": "^2.4.0",
+    "@tauri-apps/plugin-updater": "^2.13.0",
     "lightweight-charts": "^5.2.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"

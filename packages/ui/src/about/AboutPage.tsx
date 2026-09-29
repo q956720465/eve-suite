@@ -3,11 +3,12 @@ import { initDatabase } from '@eve-suite/core/db/tauri';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 
+import type { UpdaterHandle } from './useUpdater';
+
 /**
- * 关于页（P6-1 版本与元数据）。
+ * 关于页（P6-1 版本与元数据 / P6-2 合规 / P6-4 软件更新）。
  *
- * 面向**用户**的元数据页：版本、运行环境、数据存放位置与数据来源。
- * 合规声明（CCP 商标与第三方开发许可）在 P6-2 追加为独立区块。
+ * 面向**用户**：合规声明、版本与运行环境、软件更新、数据存放位置与数据来源。
  */
 
 /** 应用配置目录名（与 `src-tauri/tauri.conf.json` 的 identifier 一致） */
@@ -23,7 +24,31 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export default function AboutPage() {
+/** 更新状态的人类可读描述 */
+function describeUpdateStatus(updater: UpdaterHandle): string {
+  switch (updater.status) {
+    case 'idle':
+      return '尚未检查';
+    case 'checking':
+      return '正在检查…';
+    case 'up-to-date':
+      return '已是最新版本';
+    case 'available':
+      return `发现新版本 ${updater.version ?? ''}`;
+    case 'downloading':
+      return updater.progress === null
+        ? '正在下载…'
+        : `正在下载 ${Math.round(updater.progress * 100)}%`;
+    case 'installing':
+      return '正在安装，完成后将自动重启…';
+    case 'error':
+      return `检查失败：${updater.error ?? '未知错误'}`;
+    default:
+      return '仅在桌面应用内可用';
+  }
+}
+
+export default function AboutPage({ updater }: { updater: UpdaterHandle }) {
   const [shellVersion, setShellVersion] = useState('检测中…');
   const [schemaVersion, setSchemaVersion] = useState('检测中…');
   const [journalMode, setJournalMode] = useState('—');
@@ -132,6 +157,52 @@ export default function AboutPage() {
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <h2>软件更新</h2>
+          <span className="hint">启动后自动检查一次；发现新版本时由你决定何时更新，不会静默安装</span>
+        </div>
+        <div className="params">
+          <button
+            type="button"
+            onClick={() => void updater.check()}
+            disabled={
+              updater.status === 'checking' ||
+              updater.status === 'downloading' ||
+              updater.status === 'installing'
+            }
+          >
+            {updater.status === 'checking' ? '检查中…' : '检查更新'}
+          </button>
+          <button type="button" onClick={() => void updater.install()} disabled={updater.status !== 'available'}>
+            立即更新
+          </button>
+        </div>
+        <table className="result">
+          <thead>
+            <tr>
+              <th>当前版本</th>
+              <th>最新版本</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>{updater.currentVersion ?? shellVersion}</td>
+              <td>{updater.version ?? '—'}</td>
+              <td className="sell">{describeUpdateStatus(updater)}</td>
+            </tr>
+          </tbody>
+        </table>
+        {updater.status === 'available' && updater.notes !== null && updater.notes.trim().length > 0 && (
+          <p className="hint">发行说明：{updater.notes}</p>
+        )}
+        <p className="hint">
+          更新包在发布时使用<strong>私钥签名</strong>，应用内用内置公钥校验 —— 签名不符会被拒绝安装。
+          检查与下载都走你本机到 GitHub 的直连，没有中间服务器。
+        </p>
       </div>
 
       <div className="panel">

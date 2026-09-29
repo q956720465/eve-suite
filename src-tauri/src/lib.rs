@@ -17,6 +17,9 @@ pub fn run() {
         .manage(oauth::OAuthState::default())
         // 桌面通知（P5-7）：系统通知 / 托盘弹窗
         .plugin(tauri_plugin_notification::init())
+        // 内置更新器（P6-4）：检查 / 下载 / 安装签名过的更新 + 安装后重启
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             app_version,
             db::db_execute,

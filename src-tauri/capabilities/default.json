@@ -1,11 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "应用主窗口默认权限集（数据库与 SDE 均通过应用自有命令实现，无需插件权限）",
+  "description": "应用主窗口默认权限集（数据库 / SDE / 通知均在自有命令或主进程内完成；仅更新器与重启需插件权限）",
   "windows": [
     "main"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "updater:default",
+    "process:default"
   ]
 }
