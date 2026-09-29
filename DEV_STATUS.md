@@ -759,6 +759,8 @@
   - **修复**：测试改为**按运行时时区动态构造**静默区间（`[LOCAL_HOUR, LOCAL_HOUR+1)`），并**补一条反向用例**（非静默时段应正常发送）→ 用例数 **447 → 448**
   - **双时区验证**：`TZ=UTC` 与本地（东八区）**均 43 文件 / 448 用例全绿**
   - **未改生产代码**：`rules.ts` 的 `new Date(nowMs).getHours()`（按本地时区判定静默）本身语义正确，问题只在测试的隐含假设
+  - **修复后第二轮 CI（run `36525080297`）全绿**：`build (windows)` / `build (macos-universal)` / `build (linux)` 均 **success**，三平台的 `Run core tests` 均 **success**（448 单测在 CI 上真正跑起来了）；`release (tag only)` 仍按设计 skipped
+  - **universal macOS 方案验证成功**：`macos-latest` runner + `--target universal-apple-darwin` 可完整编译并打包（无需 `macos-15-intel`，方案 B 成立）
 
 **P6-6 口径（已定，经用户确认）**：
 - **macOS 用 universal 包**（替代加 Intel runner）：一个 dmg 覆盖两种 Mac，且不依赖 2027 秋将被移除的 Intel runner；若 CI 上 universal 编译失败，退回「加 `macos-15-intel` 出第二个 dmg」
