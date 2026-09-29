@@ -3,6 +3,7 @@ import { initDatabase } from '@eve-suite/core/db/tauri';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
 
+import AboutPage from './about/AboutPage';
 import CalcPage from './calc/CalcPage';
 import { useLpStoreSync } from './lp/useLpStoreSync';
 import MarketPage from './market/MarketPage';
@@ -18,7 +19,7 @@ import SdePage from './sde/SdePage';
 import SpreadPage from './market/SpreadPage';
 import { useHistoryInit } from './market/useHistoryInit';
 
-type Tab = 'sde' | 'market' | 'spread' | 'watchlist' | 'assets' | 'calc' | 'notify';
+type Tab = 'sde' | 'market' | 'spread' | 'watchlist' | 'assets' | 'calc' | 'notify' | 'about';
 
 const TABS: readonly { id: Tab; label: string }[] = [
   { id: 'sde', label: '数据' },
@@ -28,6 +29,7 @@ const TABS: readonly { id: Tab; label: string }[] = [
   { id: 'assets', label: '资产' },
   { id: 'calc', label: '计算' },
   { id: 'notify', label: '提醒' },
+  { id: 'about', label: '关于' },
 ];
 
 /** 应用壳：环境状态 + 页签导航 + 各功能页（P2 起行情采集在应用级运行） */
@@ -141,7 +143,7 @@ export default function App() {
             ))}
           </nav>
         </div>
-        <p className="subtitle">P5 全域行情 · 跨区价差 · 历史全量 · 库存缺口 · 资产与净值 · 计算器 · 提醒</p>
+        <p className="subtitle">全域行情 · 跨区价差 · 历史全量 · 库存缺口 · 工业对账 · 采矿时薪 · 资产与净值 · 提醒</p>
         <p className="meta">
           core 版本：<code>{CORE_VERSION}</code>
         </p>
@@ -160,6 +162,7 @@ export default function App() {
       {tab === 'assets' && <AssetsPage characters={characters} sync={personalSync} />}
       {tab === 'calc' && <CalcPage lpStore={lpStore} />}
       {tab === 'notify' && <NotifyPage engine={notifyEngine} />}
+      {tab === 'about' && <AboutPage />}
     </main>
   );
 }

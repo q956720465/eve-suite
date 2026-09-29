@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "EVE Suite",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "identifier": "com.eve-suite.desktop",
   "build": {
     "frontendDist": "../packages/ui/dist",

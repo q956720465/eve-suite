@@ -1,6 +1,6 @@
 [package]
 name = "eve-suite"
-version = "0.0.0"
+version = "1.0.0"
 description = "EVE Online 单机桌面工具套件"
 authors = ["q956720465"]
 edition = "2021"

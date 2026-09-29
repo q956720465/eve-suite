@@ -1,6 +1,6 @@
 {
   "name": "@eve-suite/core",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "纯 TypeScript 核心逻辑包（ESI 客户端 / 数据库 / 四大引擎 / 同步调度 / 通知），不依赖任何 UI",
