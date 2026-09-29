@@ -51,6 +51,16 @@ export type {
   InventoryHubSummary,
 } from './inventory';
 
+export { INDUSTRY_ACTIVITY_IDS, computeIndustryReconciliation, resolveIndustryActivity } from './industry';
+export type {
+  IndustryActivitySummary,
+  IndustryJobReconciliation,
+  IndustryLedgerLine,
+  IndustryMaterialLine,
+  IndustryReconciliationOptions,
+  IndustryReconciliationResult,
+} from './industry';
+
 export {
   EVE_DOWNTIME_UTC_HOUR,
   computeMiningLedger,

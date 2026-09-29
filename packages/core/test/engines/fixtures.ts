@@ -125,3 +125,78 @@ export async function insertBlueprint(db: DbAdapter, fixture: BlueprintFixture):
     );
   }
 }
+
+export interface IndustryJobInput {
+  characterId: number;
+  jobId: number;
+  activityId: number;
+  blueprintTypeId: number;
+  runs: number;
+  status: string;
+  startDate: string;
+  endDate: string;
+  completedDate?: string | null;
+  successfulRuns?: number | null;
+  productTypeId?: number | null;
+  cost?: number | null;
+  facilityId?: number;
+}
+
+/** 插入一条工业任务（未给出的可选列保持 NULL） */
+export async function insertIndustryJob(db: DbAdapter, input: IndustryJobInput): Promise<void> {
+  await db.execute(
+    `INSERT INTO industry_jobs (character_id, job_id, activity_id, blueprint_id, blueprint_type_id,
+                                blueprint_location_id, output_location_id, facility_id, station_id,
+                                installer_id, runs, status, duration, start_date, end_date,
+                                product_type_id, successful_runs, cost, completed_date, fetched_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, '2026-09-27T00:00:00Z')`,
+    [
+      input.characterId,
+      input.jobId,
+      input.activityId,
+      input.blueprintTypeId,
+      input.blueprintTypeId,
+      input.facilityId ?? JITA_44,
+      input.facilityId ?? JITA_44,
+      input.facilityId ?? JITA_44,
+      input.facilityId ?? JITA_44,
+      input.characterId,
+      input.runs,
+      input.status,
+      input.startDate,
+      input.endDate,
+      input.productTypeId ?? null,
+      input.successfulRuns ?? null,
+      input.cost ?? null,
+      input.completedDate ?? null,
+    ],
+  );
+}
+
+export interface IndustryJournalInput {
+  characterId: number;
+  entryId: number;
+  jobId: number;
+  date: string;
+  refType?: string;
+  amount: number;
+  description?: string;
+}
+
+/** 插入一条「与工业任务关联」的钱包流水（context_id_type = 'industry_job_id'） */
+export async function insertIndustryJournal(db: DbAdapter, input: IndustryJournalInput): Promise<void> {
+  await db.execute(
+    `INSERT INTO wallet_journal (character_id, entry_id, date, ref_type, description, amount,
+                                 context_id, context_id_type, fetched_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'industry_job_id', '2026-09-27T00:00:00Z')`,
+    [
+      input.characterId,
+      input.entryId,
+      input.date,
+      input.refType ?? 'industry_job_tax',
+      input.description ?? '',
+      input.amount,
+      input.jobId,
+    ],
+  );
+}
