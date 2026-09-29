@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
 import { computeInventoryGap, getOwnedQuantities } from '../../src/engines/inventory';
+import { HUB_MAIN_STATIONS, TRADE_HUBS } from '../../src/market/hubs';
 import { createMigratedDb } from '../helpers/db';
-import { AMARR, JITA, insertAsset, insertBlueprint, insertStats } from './fixtures';
+import {
+  AMARR,
+  JITA,
+  JITA_44,
+  JITA_OTHER,
+  insertAsset,
+  insertBlueprint,
+  insertSellOrders,
+  insertStats,
+} from './fixtures';
 
 const BP = 1000;
 const PRODUCT = 2000;
@@ -125,8 +135,8 @@ describe('computeInventoryGap（缺口 + 多枢纽比价）', () => {
     expect(a.unitPrice).toBe(10); // 建议枢纽 = 吉他
     expect(a.subtotal).toBe(1000);
     expect(a.prices).toEqual([
-      { regionId: JITA, price: 10 },
-      { regionId: AMARR, price: 8 },
+      { regionId: JITA, stationId: null, price: 10 },
+      { regionId: AMARR, stationId: null, price: 8 },
     ]);
   });
 
@@ -157,8 +167,8 @@ describe('computeInventoryGap（缺口 + 多枢纽比价）', () => {
     const result = await computeInventoryGap(db, BP, { regionIds: [JITA, AMARR] });
 
     expect(result.hubSummaries).toEqual([
-      { regionId: JITA, totalCost: 2000, missingCount: 1, fullyPriced: false },
-      { regionId: AMARR, totalCost: 2200, missingCount: 0, fullyPriced: true },
+      { regionId: JITA, stationId: null, totalCost: 2000, missingCount: 1, fullyPriced: false },
+      { regionId: AMARR, stationId: null, totalCost: 2200, missingCount: 0, fullyPriced: true },
     ]);
     expect(result.suggestedRegionId).toBe(AMARR);
     expect(result.totalCost).toBe(2200);
@@ -214,5 +224,142 @@ describe('computeInventoryGap（缺口 + 多枢纽比价）', () => {
 
     expect(p5.lines.find((line) => line.typeId === MAT_A)?.unitPrice).toBe(10);
     expect(best.lines.find((line) => line.typeId === MAT_A)?.unitPrice).toBe(7);
+  });
+});
+
+// ---------- P10-1：站点级比价 ----------
+
+/** 取常量前两项作为测试地点对（吉他 4-4 / 艾玛），顺便验证常量与 fixtures 常量一致 */
+const HUB_JITA = HUB_MAIN_STATIONS[0];
+const HUB_AMARR = HUB_MAIN_STATIONS[1];
+const LOC_JITA = { regionId: HUB_JITA.regionId, stationId: HUB_JITA.stationId };
+const LOC_AMARR = { regionId: HUB_AMARR.regionId, stationId: HUB_AMARR.stationId };
+
+describe('computeInventoryGap（站点级比价，P10-1）', () => {
+  it('HUB_MAIN_STATIONS：顺序即订单量降序、区域集合与 TRADE_HUBS 一致、与 fixtures 常量对齐', () => {
+    expect(HUB_MAIN_STATIONS.map((item) => item.stationId)).toEqual([
+      60003760, 60008494, 60011866, 60005686, 60004588,
+    ]);
+    expect(HUB_MAIN_STATIONS.map((item) => item.regionId)).toEqual([
+      10000002, 10000043, 10000032, 10000042, 10000030,
+    ]);
+    expect(new Set(HUB_MAIN_STATIONS.map((item) => item.regionId))).toEqual(
+      new Set(TRADE_HUBS.map((hub) => hub.regionId)),
+    );
+    expect(LOC_JITA).toEqual({ regionId: JITA, stationId: JITA_44 });
+    expect(LOC_AMARR).toEqual({ regionId: AMARR, stationId: JITA_OTHER });
+  });
+
+  it('站点级比价：各站取本站订单簿、建议站点与理论下限与区域级同口径', async () => {
+    const db = await setup();
+    // 吉他 4-4：A 10/12、B 20、C 5（best_sell → A=10 B=20 C=5）
+    await insertSellOrders(db, MAT_A, [10, 12], { regionId: JITA, locationId: JITA_44, firstOrderId: 1 });
+    await insertSellOrders(db, MAT_B, [20], { regionId: JITA, locationId: JITA_44, firstOrderId: 3 });
+    await insertSellOrders(db, MAT_C, [5], { regionId: JITA, locationId: JITA_44, firstOrderId: 4 });
+    // 艾玛：A 8、B 25、C 5
+    await insertSellOrders(db, MAT_A, [8], { regionId: AMARR, locationId: JITA_OTHER, firstOrderId: 5 });
+    await insertSellOrders(db, MAT_B, [25], { regionId: AMARR, locationId: JITA_OTHER, firstOrderId: 6 });
+    await insertSellOrders(db, MAT_C, [5], { regionId: AMARR, locationId: JITA_OTHER, firstOrderId: 7 });
+
+    const result = await computeInventoryGap(db, BP, {
+      locations: [LOC_JITA, LOC_AMARR],
+      basis: 'best_sell',
+    });
+
+    expect(result.locations).toEqual([LOC_JITA, LOC_AMARR]);
+    expect(result.hubRegionIds).toEqual([JITA, AMARR]);
+    expect(result.hubSummaries).toEqual([
+      { regionId: JITA, stationId: JITA_44, totalCost: 2050, missingCount: 0, fullyPriced: true },
+      { regionId: AMARR, stationId: JITA_OTHER, totalCost: 2100, missingCount: 0, fullyPriced: true },
+    ]);
+    expect(result.suggestedRegionId).toBe(JITA);
+    expect(result.suggestedStationId).toBe(JITA_44);
+    expect(result.totalCost).toBe(2050); // 1000+1000+50
+    expect(result.floorCost).toBe(1850); // 800+1000+50
+
+    const a = result.lines.find((line) => line.typeId === MAT_A);
+    expect(a?.prices).toEqual([
+      { regionId: JITA, stationId: JITA_44, price: 10 },
+      { regionId: AMARR, stationId: JITA_OTHER, price: 8 },
+    ]);
+    expect(a?.cheapestRegionId).toBe(AMARR);
+    expect(a?.cheapestStationId).toBe(JITA_OTHER);
+    expect(a?.unitPrice).toBe(10); // 建议地点 = 吉他 4-4
+    expect(a?.subtotal).toBe(1000);
+  });
+
+  it('站点级建议站点同样优先「能一次买齐」（缺价少者胜）', async () => {
+    const db = await setup();
+    // 吉他 4-4 更便宜但缺 MAT_C
+    await insertSellOrders(db, MAT_A, [10], { regionId: JITA, locationId: JITA_44, firstOrderId: 1 });
+    await insertSellOrders(db, MAT_B, [20], { regionId: JITA, locationId: JITA_44, firstOrderId: 2 });
+    // 艾玛更贵但齐全
+    await insertSellOrders(db, MAT_A, [11], { regionId: AMARR, locationId: JITA_OTHER, firstOrderId: 3 });
+    await insertSellOrders(db, MAT_B, [21], { regionId: AMARR, locationId: JITA_OTHER, firstOrderId: 4 });
+    await insertSellOrders(db, MAT_C, [5], { regionId: AMARR, locationId: JITA_OTHER, firstOrderId: 5 });
+
+    const result = await computeInventoryGap(db, BP, {
+      locations: [LOC_JITA, LOC_AMARR],
+      basis: 'best_sell',
+    });
+
+    expect(result.hubSummaries).toEqual([
+      { regionId: JITA, stationId: JITA_44, totalCost: 2000, missingCount: 1, fullyPriced: false },
+      { regionId: AMARR, stationId: JITA_OTHER, totalCost: 2200, missingCount: 0, fullyPriced: true },
+    ]);
+    expect(result.suggestedRegionId).toBe(AMARR);
+    expect(result.suggestedStationId).toBe(JITA_OTHER);
+    expect(result.totalCost).toBe(2200);
+  });
+
+  it('站点级不回退到区域聚合价：区域有 stats 而本站无该单 → 该站计缺价', async () => {
+    const db = await setup();
+    // 区域聚合价（区域级路径会用到）
+    for (const typeId of [MAT_A, MAT_B, MAT_C]) {
+      await insertStats(db, { regionId: JITA, typeId, bestSell: 99, p5Sell: 99 });
+    }
+    // 站点只有 MAT_A 的卖单
+    await insertSellOrders(db, MAT_A, [7], { regionId: JITA, locationId: JITA_44, firstOrderId: 1 });
+
+    const region = await computeInventoryGap(db, BP, { regionIds: [JITA], basis: 'best_sell' });
+    const station = await computeInventoryGap(db, BP, {
+      locations: [{ regionId: JITA, stationId: JITA_44 }],
+      basis: 'best_sell',
+    });
+
+    // 区域级走 stats：99 × (100+50+10)
+    expect(region.totalCost).toBe(15840);
+    expect(region.missingTypeIds).toEqual([]);
+
+    // 站点级只认本站订单簿：B / C 无卖单 → 缺价，**不**回退到 stats 的 99
+    expect(station.lines.find((line) => line.typeId === MAT_A)?.unitPrice).toBe(7);
+    expect(station.lines.find((line) => line.typeId === MAT_B)?.unitPrice).toBeNull();
+    expect(station.missingTypeIds).toEqual([MAT_B, MAT_C]);
+    expect(station.totalCost).toBe(700);
+    expect(station.hubSummaries[0]).toEqual({
+      regionId: JITA,
+      stationId: JITA_44,
+      totalCost: 700,
+      missingCount: 2,
+      fullyPriced: false,
+    });
+  });
+
+  it('locations 去重保持顺序，并覆盖 regionIds', async () => {
+    const db = await setup();
+    await insertSellOrders(db, MAT_A, [10], { regionId: JITA, locationId: JITA_44, firstOrderId: 1 });
+
+    const result = await computeInventoryGap(db, BP, {
+      regionIds: [AMARR], // 应被 locations 覆盖
+      locations: [LOC_JITA, LOC_JITA, LOC_AMARR],
+      basis: 'best_sell',
+    });
+
+    expect(result.locations).toEqual([LOC_JITA, LOC_AMARR]);
+    expect(result.hubRegionIds).toEqual([JITA, AMARR]);
+    expect(result.hubSummaries.map((summary) => summary.stationId)).toEqual([
+      JITA_44,
+      JITA_OTHER,
+    ]);
   });
 });

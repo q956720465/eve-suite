@@ -8,6 +8,7 @@ import {
   getStationNames,
   getTypeNames,
   listAssetLocationIds,
+  listSnapshotSeries,
   listSnapshots,
   writeDailySnapshot,
   type AccountNetWorth,
@@ -25,6 +26,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { initCoreRuntime } from '../core/runtime';
+import NetWorthChart from './NetWorthChart';
 import type { CharactersHandle } from './useCharacters';
 import type { PersonalSyncHandle } from './usePersonalSync';
 
@@ -47,7 +49,12 @@ const HUB_MAIN_STATION_IDS: readonly number[] = [
 const BASIS_LABELS: Record<ValuationBasis, string> = {
   p5_sell: '5% 分位（默认）',
   best_sell: '最低卖价',
+  wavg_sell: '挂单量加权均价（尾部敏感）',
+  w5_sell: '挂单量加权 5% 分位',
 };
+
+/** 净值趋势默认回看窗口（天）；0 = 全部 */
+const SNAPSHOT_WINDOW_DEFAULT = 90;
 
 /** 端点中文名（与 PERSONAL_SCOPES 一一对应） */
 const SCOPE_LABELS: Record<PersonalScope, string> = {
@@ -70,6 +77,10 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
   const [networth, setNetworth] = useState<NetWorthBreakdown | null>(null);
   const [account, setAccount] = useState<AccountNetWorth | null>(null);
   const [snapshots, setSnapshots] = useState<NetWorthSnapshot[]>([]);
+  /** 净值趋势（升序快照序列）与图表选项：与表格分离，切窗口/分项时只重取快照，不重算资产与净值 */
+  const [series, setSeries] = useState<NetWorthSnapshot[]>([]);
+  const [snapshotWindow, setSnapshotWindow] = useState(SNAPSHOT_WINDOW_DEFAULT);
+  const [showBreakdown, setShowBreakdown] = useState(false);
   const [expandedTypeId, setExpandedTypeId] = useState<number | null>(null);
   const [details, setDetails] = useState<AssetDetailRow[]>([]);
   const [stationNames, setStationNames] = useState<Map<number, StationNameEntry>>(new Map());
@@ -146,6 +157,27 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
       setPanelMessage(`读取角色数据失败：${error instanceof Error ? error.message : String(error)}`),
     );
   }, [selectedId, loadCharacter, sync.lastRound, valuationOptions]);
+
+  /**
+   * 净值趋势序列：与快照表格分离加载（切窗口 / 分项不触发资产与净值的重算）。
+   * 依赖 `snapshots` 是为了「手点生成今日快照」后同步刷新趋势。
+   */
+  useEffect(() => {
+    if (selectedId === null) {
+      setSeries([]);
+      return;
+    }
+    void (async () => {
+      try {
+        const { db } = await initCoreRuntime();
+        setSeries(await listSnapshotSeries(db, selectedId, snapshotWindow));
+      } catch (error) {
+        setPanelMessage(
+          `净值趋势加载失败：${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    })();
+  }, [selectedId, snapshotWindow, snapshots]);
 
   // 站点归属区域：切换基准区域时清空站点（否则区域不匹配会导致全部缺价）
   useEffect(() => {
@@ -582,6 +614,42 @@ export default function AssetsPage({ characters, sync }: AssetsPageProps) {
 
           <div className="panel">
             <h2>净值快照（每日一条）</h2>
+            <p className="hint">
+              横轴为快照 <strong>UTC 日期</strong>：同日多次同步<strong>只更新不新增</strong>；
+              <strong>没同步的那天没有数据点</strong>——断口表示「无快照」，不是 0。
+            </p>
+            {snapshots.length > 0 && (
+              <div className="params">
+                <label>
+                  回看窗口
+                  <select
+                    value={snapshotWindow}
+                    onChange={(event) => setSnapshotWindow(Number(event.target.value))}
+                  >
+                    <option value={30}>最近 30 天</option>
+                    <option value={90}>最近 90 天</option>
+                    <option value={0}>全部</option>
+                  </select>
+                </label>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={showBreakdown}
+                    onChange={(event) => setShowBreakdown(event.target.checked)}
+                  />
+                  叠加分项（资产 / 钱包 / 卖单 / 合同）
+                </label>
+              </div>
+            )}
+            {series.length > 1 && (
+              <NetWorthChart points={series} showBreakdown={showBreakdown} />
+            )}
+            {series.length === 1 && (
+              <p className="hint">
+                目前只有 1 个数据点（{series[0].snapshotDate} · 净值 {formatIsk(series[0].totalValue)}）
+                —— 趋势需逐日积累，明天起才会出现折线。
+              </p>
+            )}
             {snapshots.length === 0 ? (
               <p className="hint">尚无快照。每次同步有数据更新时会自动写入当日快照。</p>
             ) : (

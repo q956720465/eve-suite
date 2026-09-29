@@ -272,3 +272,25 @@ export async function listSnapshots(
     missingTypeIds: [],
   }));
 }
+
+/**
+ * 「全部快照」的取值上限：表内每角色每 UTC 日最多一行，1 万条已远超真实使用年限，
+ * 故等价于「不截断」，同时避免把 `LIMIT` 传成 `-1`（SQLite 中 `-1` 表示无限制，语义隐晦）。
+ */
+const SNAPSHOT_SERIES_MAX = 10_000;
+
+/**
+ * 净值快照时间序列（**按日期升序**，供折线图直接使用）。
+ *
+ * 与 `listSnapshots`（倒序、供表格）的区别：先取「最近 `limit` 条」，**再翻转为升序**，
+ * 让「取最近 N 天」与「图上从左到右」两个语义同时成立。
+ * `limit` 省略或 ≤ 0 → 取全部；缺日的快照**没有行**，调用方需自行按断点处理（不要补 0）。
+ */
+export async function listSnapshotSeries(
+  db: DbAdapter,
+  characterId: number,
+  limit = 0,
+): Promise<NetWorthSnapshot[]> {
+  const rows = await listSnapshots(db, characterId, limit > 0 ? limit : SNAPSHOT_SERIES_MAX);
+  return rows.reverse();
+}

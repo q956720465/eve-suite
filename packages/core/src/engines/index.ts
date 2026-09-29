@@ -3,9 +3,11 @@ export {
   DEFAULT_OUTLIER_MULTIPLE,
   DEFAULT_VALUATION_BASIS,
   DEFAULT_VALUATION_REGION_ID,
+  basisFallbackChain,
   filterOutlierPrices,
   getValuationPrice,
   positivePrices,
+  priceFromSellLevels,
   priceFromSellPrices,
   valueItems,
   valueQuantity,
@@ -13,6 +15,7 @@ export {
 export type {
   BatchValuation,
   BatchValuationItem,
+  PriceOnlyBasis,
   TypeValuation,
   ValuationBasis,
   ValuationItem,
@@ -49,6 +52,7 @@ export type {
   InventoryGapPrice,
   InventoryGapResult,
   InventoryHubSummary,
+  InventoryLocationRef,
 } from './inventory';
 
 export { INDUSTRY_ACTIVITY_IDS, computeIndustryReconciliation, resolveIndustryActivity } from './industry';
@@ -83,6 +87,9 @@ export type {
 
 export { buildLpPortfolio, computeOfferValue, rankLpOffers } from './lp';
 export type {
+  LpBlueprintEstimate,
+  LpBlueprintOptions,
+  LpOfferOutputKind,
   LpOfferRanking,
   LpOfferValuation,
   LpPortfolioEntry,

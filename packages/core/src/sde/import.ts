@@ -7,6 +7,7 @@ import {
   mapCategory,
   mapConstellation,
   mapGroup,
+  mapMarketGroup,
   mapRegion,
   mapStation,
   mapSystem,
@@ -19,6 +20,7 @@ import type {
   RawCategory,
   RawConstellation,
   RawGroup,
+  RawMarketGroup,
   RawNpcCorporation,
   RawNpcStation,
   RawRegion,
@@ -58,6 +60,7 @@ export const SDE_IMPORTED_FILES: readonly SdeFileName[] = [
   'stationOperations.jsonl',
   'blueprints.jsonl',
   'typeMaterials.jsonl',
+  'marketGroups.jsonl',
 ];
 
 const CATEGORY_COLUMNS = ['category_id', 'name_en', 'name_zh', 'published'] as const;
@@ -112,9 +115,18 @@ const BLUEPRINT_COLUMNS = ['blueprint_type_id', 'max_production_limit'] as const
 const ACTIVITY_COLUMNS = ['blueprint_type_id', 'activity', 'time_seconds'] as const;
 const IO_COLUMNS = ['blueprint_type_id', 'activity', 'direction', 'type_id', 'quantity'] as const;
 const TYPE_MATERIAL_COLUMNS = ['type_id', 'material_type_id', 'quantity'] as const;
+const MARKET_GROUP_COLUMNS = [
+  'market_group_id',
+  'parent_group_id',
+  'name_en',
+  'name_zh',
+  'icon_id',
+  'has_types',
+] as const;
 
 /** 重新导入前需清空的表（无外键约束，顺序无关） */
 const TABLES_TO_CLEAR = [
+  'sde_market_groups',
   'sde_type_materials',
   'sde_blueprint_io',
   'sde_blueprint_activities',
@@ -191,6 +203,10 @@ export async function importSde(
     counts.blueprint_io = blueprints.io;
 
     counts.type_materials = await importTypeMaterials(tx, source, options);
+
+    counts.market_groups = await importSimple<RawMarketGroup>(
+      tx, source, 'marketGroups.jsonl', mapMarketGroup, MARKET_GROUP_COLUMNS, 'sde_market_groups', options,
+    );
 
     await writeMeta(tx, META_BUILD_NUMBER, String(version.buildNumber));
     await writeMeta(tx, 'release_date', version.releaseDate);

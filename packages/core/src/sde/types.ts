@@ -124,6 +124,19 @@ export interface RawTypeMaterials {
   materials?: RawTypeMaterialEntry[];
 }
 
+/**
+ * `marketGroups.jsonl` 一行：游戏内市场左侧的「市场分组」。
+ * 实测（build 3552227 共 2,114 行）：`parentGroupID` 只出现在非根节点上（2,095 行），
+ * 且位于行尾；19 个根节点无该字段。
+ */
+export interface RawMarketGroup {
+  _key?: number;
+  name?: LocalizedText;
+  hasTypes?: boolean;
+  iconID?: number;
+  parentGroupID?: number;
+}
+
 // ---------- 数据库行 ----------
 
 export interface SdeCategoryRow {
@@ -227,6 +240,23 @@ export interface SdeTypeMaterialRow {
   quantity: number;
 }
 
+/** 市场分组（游戏内市场左侧树；P9-1 市场浏览页的数据基础） */
+export interface SdeMarketGroupRow {
+  market_group_id: number;
+  /** 根节点为 null */
+  parent_group_id: number | null;
+  name_en: string;
+  name_zh: string | null;
+  icon_id: number | null;
+  /**
+   * SDE 的 `hasTypes` 标志（0/1）。
+   * **不可当作「叶子节点」判据**：build 3552227 实测 1,670 个分组为 1，但与
+   * `sde_types.market_group_id` 实际引用的 1,621 个分组并非同一集合——存在同时带子分组
+   * 与物品的分组，也存在无子分组却为 0 的分组。展示层应以「有无子分组 / 是否查到物品」为准。
+   */
+  has_types: number;
+}
+
 /** SDE 版本信息（来自 _sde.jsonl） */
 export interface SdeVersion {
   buildNumber: number;
@@ -253,7 +283,8 @@ export type SdeFileName =
   | 'npcCorporations.jsonl'
   | 'stationOperations.jsonl'
   | 'blueprints.jsonl'
-  | 'typeMaterials.jsonl';
+  | 'typeMaterials.jsonl'
+  | 'marketGroups.jsonl';
 
 /** 导入进度回调载荷 */
 export interface SdeImportProgress {

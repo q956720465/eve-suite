@@ -163,6 +163,40 @@ export const SAMPLE_FILES: Partial<Record<SdeFileName, string[]>> = {
       materials: [{ materialTypeID: 34 }, { quantity: 5 }, { materialTypeID: 36, quantity: 0 }],
     }),
   ],
+
+  // 真实结构（build 3552227）：根节点无 parentGroupID，子节点带 parentGroupID
+  'marketGroups.jsonl': [
+    // 根节点（无 parentGroupID）
+    JSON.stringify({
+      _key: 2,
+      name: { en: 'Blueprints & Reactions', zh: '蓝图和反应' },
+      hasTypes: false,
+      iconID: 2703,
+    }),
+    JSON.stringify({
+      _key: 4,
+      name: { en: 'Ships', zh: '舰船' },
+      hasTypes: false,
+      iconID: 1443,
+    }),
+    // 子节点（带 parentGroupID）；hasTypes 与父子关系相互独立
+    JSON.stringify({
+      _key: 5,
+      name: { en: 'Standard Frigates', zh: '标准护卫舰' },
+      hasTypes: false,
+      iconID: 1443,
+      parentGroupID: 1361,
+    }),
+    JSON.stringify({
+      _key: 1857,
+      name: { en: 'Minerals', zh: '矿物' },
+      hasTypes: true,
+      iconID: 404,
+      parentGroupID: 533,
+    }),
+    // 缺 name → 丢弃
+    JSON.stringify({ _key: 999, hasTypes: true }),
+  ],
 };
 
 /** 内存数据源：测试用（不触网、不落盘） */

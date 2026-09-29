@@ -135,6 +135,50 @@ export async function refreshAccessToken(
   });
 }
 
+/** 撤销令牌的参数（RFC 7009 令牌撤销） */
+export interface RevokeTokenParams {
+  clientId: string;
+  /** 待撤销的令牌（本项目为刷新令牌） */
+  token: string;
+  /** 令牌类型提示，默认 `refresh_token` */
+  tokenTypeHint?: 'refresh_token' | 'access_token';
+}
+
+/** 撤销结果；`invalid_grant` 表示服务端认定该令牌本已失效（同样无需再撤销） */
+export type RevokeOutcome = 'revoked' | 'invalid_grant';
+
+/**
+ * 撤销令牌（RFC 7009）——登出时让远端刷新令牌立即失效，
+ * 否则它仍可继续换取新的访问令牌（本地删掉条目并不影响远端）。
+ *
+ * 响应口径（2026-09-29 对真实 SSO 实测）：**未知/无效令牌返回 200**（RFC 7009 规定
+ * 服务端不得因令牌无效而报错），故：
+ * - 2xx → `revoked`（涵盖「刚撤销」与「本就已失效」两种情形）
+ * - 非 2xx 且响应体 `error = invalid_grant` → 返回 `invalid_grant`（不抛错，调用方同样视为完成）
+ * - 其它非 2xx（网络外的协议/服务端错误）→ 抛 `TokenRequestError`，由调用方按 best-effort 处理
+ *
+ * 公共客户端（PKCE）在表单里带 `client_id` 鉴权，无需 client_secret。
+ */
+export async function revokeToken(
+  http: TokenHttp,
+  params: RevokeTokenParams,
+): Promise<RevokeOutcome> {
+  const response = await http.postForm(SSO_REVOKE_ENDPOINT, {
+    token: params.token,
+    token_type_hint: params.tokenTypeHint ?? 'refresh_token',
+    client_id: params.clientId,
+  });
+
+  if (response.status >= 200 && response.status < 300) return 'revoked';
+  const oauthError = parseOAuthError(response.text);
+  if (oauthError === 'invalid_grant') return 'invalid_grant';
+  throw new TokenRequestError(
+    response.status,
+    oauthError,
+    `撤销令牌失败：HTTP ${response.status} ${response.text.slice(0, 200)}`,
+  );
+}
+
 /** 解析令牌响应体（含 JWT 载荷中的角色信息） */
 export function parseTokenResponse(text: string, nowMs: number): TokenSet {
   let payload: Record<string, unknown>;

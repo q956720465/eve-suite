@@ -3,11 +3,19 @@ import { describe, expect, it } from 'vitest';
 import { EsiClient } from '../../src/esi/client';
 import { RequestScheduler } from '../../src/esi/scheduler';
 import {
+  DEFAULT_SPREAD_DEPTH_QUANTITY,
   DEFAULT_SPREAD_FILTERS,
+  MAX_SPREAD_DEPTH_QUANTITY,
+  computeSpreadCapture,
+  computeSpreadDepth,
   getSpreadFreshness,
   judgeSpreadHistory,
+  normalizeSpreadDepthQuantity,
   rankCrossRegionSpreads,
   readSpreadHistoryStats,
+  readSpreadLiquidityStats,
+  spreadCaptureKey,
+  spreadDepthKey,
   validateSpreadHistory,
   type SpreadRow,
 } from '../../src/market/spread';
@@ -35,6 +43,8 @@ interface StatsSeed {
   p95Buy?: number | null;
   sellOrders?: number;
   buyOrders?: number;
+  /** 在架卖量（P11-3 库存天数用；缺省 1000 保持既有用例不变） */
+  sellVolume?: number;
   updatedAt?: string;
 }
 
@@ -77,12 +87,13 @@ async function seedStats(
     `INSERT INTO market_stats
        (region_id, type_id, best_sell, best_buy, sell_volume, buy_volume,
         sell_orders, buy_orders, spread, p5_sell, p95_buy, updated_at)
-     VALUES (?, ?, ?, ?, 1000, 1000, ?, ?, NULL, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, 1000, ?, ?, NULL, ?, ?, ?)`,
     [
       regionId,
       typeId,
       seed.bestSell ?? null,
       seed.bestBuy ?? null,
+      seed.sellVolume ?? 1000,
       seed.sellOrders ?? 10,
       seed.buyOrders ?? 10,
       seed.p5Sell ?? null,
@@ -458,5 +469,559 @@ describe('候选历史校验 validateSpreadHistory', () => {
     expect(http.calls).toHaveLength(4);
     expect(verdicts).toHaveLength(2);
     expect(verdicts.every((verdict) => !verdict.passed)).toBe(true);
+  });
+});
+
+/* --------------------- 订单簿深度走量（P11-2） --------------------- */
+
+/** order_id 为全库唯一主键，跨用例用递增计数器避免冲突 */
+let nextOrderId = 1;
+
+async function seedOrders(
+  db: Awaited<ReturnType<typeof createMigratedDb>>,
+  regionId: number,
+  typeId: number,
+  isBuy: boolean,
+  levels: readonly { price: number; volume: number; minVolume?: number }[],
+): Promise<void> {
+  for (const level of levels) {
+    await db.execute(
+      `INSERT INTO market_orders
+         (order_id, region_id, type_id, location_id, price, volume_total, volume_remain,
+          min_volume, is_buy_order, duration, issued, range, fetched_at)
+       VALUES (?, ?, ?, 60003760, ?, ?, ?, ?, ?, 90, '2026-09-01T00:00:00Z', 'region', '2026-09-27T00:00:00Z')`,
+      [
+        nextOrderId,
+        regionId,
+        typeId,
+        level.price,
+        level.volume,
+        level.volume,
+        level.minVolume ?? 1,
+        isBuy ? 1 : 0,
+      ],
+    );
+    nextOrderId += 1;
+  }
+}
+
+/** 卖单（成本侧；P11-2 与 P11-4 同口径） */
+function seedSellOrders(
+  db: Awaited<ReturnType<typeof createMigratedDb>>,
+  regionId: number,
+  typeId: number,
+  levels: readonly { price: number; volume: number; minVolume?: number }[],
+): Promise<void> {
+  return seedOrders(db, regionId, typeId, false, levels);
+}
+
+/** 买单（收益侧，P11-4） */
+function seedBuyOrders(
+  db: Awaited<ReturnType<typeof createMigratedDb>>,
+  regionId: number,
+  typeId: number,
+  levels: readonly { price: number; volume: number; minVolume?: number }[],
+): Promise<void> {
+  return seedOrders(db, regionId, typeId, true, levels);
+}
+
+describe('订单簿深度走量（P11-2）', () => {
+  it('逐档吃单：吃穿第一档后均价介于两档之间', async () => {
+    const { db } = await setup();
+    const regionId = REGIONS.buyA.id;
+    await seedSellOrders(db, regionId, 34, [
+      { price: 10, volume: 100 },
+      { price: 20, volume: 100 },
+      { price: 30, volume: 100 },
+    ]);
+
+    const depth = await computeSpreadDepth(db, [{ regionId, typeId: 34 }], 150);
+    const result = depth.get(spreadDepthKey(regionId, 34));
+
+    // 100@10 + 50@20 = 1000 + 1000 = 2000 / 150
+    expect(result?.averagePrice).toBeCloseTo(2000 / 150);
+    expect(result?.filledQuantity).toBe(150);
+    expect(result?.availableQuantity).toBe(300);
+    expect(result?.sufficient).toBe(true);
+  });
+
+  it('边界：目标量恰好等于第一档挂单量', async () => {
+    const { db } = await setup();
+    const regionId = REGIONS.buyA.id;
+    await seedSellOrders(db, regionId, 34, [
+      { price: 10, volume: 100 },
+      { price: 20, volume: 100 },
+    ]);
+
+    const depth = await computeSpreadDepth(db, [{ regionId, typeId: 34 }], 100);
+    const result = depth.get(spreadDepthKey(regionId, 34));
+
+    expect(result?.averagePrice).toBe(10);
+    expect(result?.filledQuantity).toBe(100);
+    expect(result?.sufficient).toBe(true);
+  });
+
+  it('量不足：按实际可吃量算均价，并回报 sufficient=false', async () => {
+    const { db } = await setup();
+    const regionId = REGIONS.buyA.id;
+    await seedSellOrders(db, regionId, 34, [
+      { price: 10, volume: 100 },
+      { price: 20, volume: 100 },
+      { price: 30, volume: 100 },
+    ]);
+
+    const depth = await computeSpreadDepth(db, [{ regionId, typeId: 34 }], 1000);
+    const result = depth.get(spreadDepthKey(regionId, 34));
+
+    // (1000 + 2000 + 3000) / 300 = 20
+    expect(result?.averagePrice).toBe(20);
+    expect(result?.filledQuantity).toBe(300);
+    expect(result?.availableQuantity).toBe(300);
+    expect(result?.sufficient).toBe(false);
+  });
+
+  it('完全无卖单：均价为 null（不与 0 混淆）', async () => {
+    const { db } = await setup();
+    const regionId = REGIONS.buyA.id;
+
+    const depth = await computeSpreadDepth(db, [{ regionId, typeId: 34 }], 100);
+    const result = depth.get(spreadDepthKey(regionId, 34));
+
+    expect(result?.averagePrice).toBeNull();
+    expect(result?.filledQuantity).toBe(0);
+    expect(result?.availableQuantity).toBe(0);
+    expect(result?.sufficient).toBe(false);
+  });
+
+  it('口径与 p5_sell 一致：整批大单（min_volume > 1）不参与吃单', async () => {
+    const { db } = await setup();
+    const regionId = REGIONS.buyA.id;
+    await seedSellOrders(db, regionId, 34, [
+      // 1 ISK 的整批大单：若被算进来会把均价压到接近 1
+      { price: 1, volume: 10_000, minVolume: 10_000 },
+      { price: 10, volume: 100 },
+      { price: 20, volume: 100 },
+    ]);
+
+    const depth = await computeSpreadDepth(db, [{ regionId, typeId: 34 }], 150);
+    const result = depth.get(spreadDepthKey(regionId, 34));
+
+    expect(result?.averagePrice).toBeCloseTo(2000 / 150);
+    expect(result?.availableQuantity).toBe(200);
+  });
+
+  it('区域隔离：同一物品在两个区的订单簿互不影响', async () => {
+    const { db } = await setup();
+    await seedSellOrders(db, REGIONS.buyA.id, 34, [{ price: 10, volume: 100 }]);
+    await seedSellOrders(db, REGIONS.buyB.id, 34, [{ price: 50, volume: 100 }]);
+
+    const depth = await computeSpreadDepth(
+      db,
+      [
+        { regionId: REGIONS.buyA.id, typeId: 34 },
+        { regionId: REGIONS.buyB.id, typeId: 34 },
+      ],
+      100,
+    );
+
+    expect(depth.get(spreadDepthKey(REGIONS.buyA.id, 34))?.averagePrice).toBe(10);
+    expect(depth.get(spreadDepthKey(REGIONS.buyB.id, 34))?.averagePrice).toBe(50);
+  });
+
+  it('重复目标自动去重，且空目标返回空 Map', async () => {
+    const { db } = await setup();
+    const regionId = REGIONS.buyA.id;
+    await seedSellOrders(db, regionId, 34, [{ price: 10, volume: 100 }]);
+
+    const depth = await computeSpreadDepth(
+      db,
+      [
+        { regionId, typeId: 34 },
+        { regionId, typeId: 34 },
+      ],
+      100,
+    );
+    expect(depth.size).toBe(1);
+    expect((await computeSpreadDepth(db, [], 100)).size).toBe(0);
+  });
+
+  it('缺省目标量 = 默认值；量足够时均价反映默认量', async () => {
+    const { db } = await setup();
+    const regionId = REGIONS.buyA.id;
+    await seedSellOrders(db, regionId, 34, [{ price: 10, volume: 10_000 }]);
+
+    const depth = await computeSpreadDepth(db, [{ regionId, typeId: 34 }]);
+    expect(depth.get(spreadDepthKey(regionId, 34))?.filledQuantity).toBe(
+      DEFAULT_SPREAD_DEPTH_QUANTITY,
+    );
+  });
+
+  it('目标量归一化：非法回退默认、下限 1、上限钳制、小数取整', () => {
+    expect(normalizeSpreadDepthQuantity(undefined)).toBe(DEFAULT_SPREAD_DEPTH_QUANTITY);
+    expect(normalizeSpreadDepthQuantity(Number.NaN)).toBe(DEFAULT_SPREAD_DEPTH_QUANTITY);
+    expect(normalizeSpreadDepthQuantity(Number.POSITIVE_INFINITY)).toBe(DEFAULT_SPREAD_DEPTH_QUANTITY);
+    expect(normalizeSpreadDepthQuantity(0)).toBe(1);
+    expect(normalizeSpreadDepthQuantity(-500)).toBe(1);
+    expect(normalizeSpreadDepthQuantity(12.9)).toBe(12);
+    expect(normalizeSpreadDepthQuantity(MAX_SPREAD_DEPTH_QUANTITY * 2)).toBe(
+      MAX_SPREAD_DEPTH_QUANTITY,
+    );
+  });
+});
+
+/* --------------------- 流动性与库存天数（P11-3） --------------------- */
+
+describe('流动性与库存天数（P11-3）', () => {
+  it('activeDays7 与 readSpreadHistoryStats 逐项相等（同口径，可预告校验结果）', async () => {
+    const { db } = await setup();
+    const regionId = REGIONS.buyA.id;
+    await seedHistory(db, regionId, 34, [
+      { date: D30, average: 10, volume: 100 },
+      // 窗口内但零成交 → 不计天数
+      { date: D7, average: 11, volume: 0 },
+      { date: '2026-09-25', average: 12, volume: 7 },
+      { date: '2026-09-26', average: 13, volume: 3 },
+    ]);
+
+    const history = await readSpreadHistoryStats(db, regionId, 34, T0);
+    const liquidity = await readSpreadLiquidityStats(db, [{ regionId, typeId: 34 }], T0);
+
+    const stats = liquidity.get(spreadDepthKey(regionId, 34));
+    expect(stats?.activeDays7).toBe(2);
+    expect(stats?.activeDays7).toBe(history.activeDays7);
+  });
+
+  it('库存天数 = 在架卖量 ÷ 近 30 天日均成交量', async () => {
+    const { db } = await setup();
+    const regionId = REGIONS.buyA.id;
+    await seedStats(db, regionId, 34, { sellVolume: 1000 });
+    await seedHistory(db, regionId, 34, [
+      { date: '2026-09-25', average: 12, volume: 100 },
+      { date: '2026-09-26', average: 13, volume: 100 },
+    ]);
+
+    const liquidity = await readSpreadLiquidityStats(db, [{ regionId, typeId: 34 }], T0);
+    const stats = liquidity.get(spreadDepthKey(regionId, 34));
+
+    expect(stats?.avgVolume30).toBe(100);
+    expect(stats?.sellVolume).toBe(1000);
+    expect(stats?.daysOfSupply).toBe(10);
+  });
+
+  it('无历史：日均量与库存天数为 null、成交天数 0（不得报 0 天库存）', async () => {
+    const { db } = await setup();
+    const regionId = REGIONS.buyA.id;
+    await seedStats(db, regionId, 34, { sellVolume: 500 });
+
+    const liquidity = await readSpreadLiquidityStats(db, [{ regionId, typeId: 34 }], T0);
+    const stats = liquidity.get(spreadDepthKey(regionId, 34));
+
+    expect(stats?.activeDays7).toBe(0);
+    expect(stats?.avgVolume30).toBeNull();
+    expect(stats?.daysOfSupply).toBeNull();
+    // 在架卖量仍如实回报（它来自 market_stats，与历史无关）
+    expect(stats?.sellVolume).toBe(500);
+  });
+
+  it('日均量为 0：库存天数为 null（不给「无穷天」假读数）', async () => {
+    const { db } = await setup();
+    const regionId = REGIONS.buyA.id;
+    await seedStats(db, regionId, 34, { sellVolume: 900 });
+    await seedHistory(db, regionId, 34, [
+      { date: '2026-09-25', average: 0, volume: 0 },
+      { date: '2026-09-26', average: 0, volume: 0 },
+    ]);
+
+    const liquidity = await readSpreadLiquidityStats(db, [{ regionId, typeId: 34 }], T0);
+    expect(liquidity.get(spreadDepthKey(regionId, 34))?.avgVolume30).toBe(0);
+    expect(liquidity.get(spreadDepthKey(regionId, 34))?.daysOfSupply).toBeNull();
+  });
+
+  it('窗口边界：30 天窗口外的行不计入日均量，7 天窗口外的行不计入成交天数', async () => {
+    const { db } = await setup();
+    const regionId = REGIONS.buyA.id;
+    await seedHistory(db, regionId, 34, [
+      // 超出 30 天窗口（< 2026-08-29）→ 完全不计
+      { date: '2026-08-28', average: 1, volume: 999 },
+      { date: '2026-09-20', average: 1, volume: 0 }, // 30 天内、7 天窗口外，且零成交
+      { date: D7, average: 1, volume: 5 }, // 恰在 7 天窗口起点且 > 0 → 计入
+      { date: '2026-09-27', average: 1, volume: 0 },
+    ]);
+
+    const liquidity = await readSpreadLiquidityStats(db, [{ regionId, typeId: 34 }], T0);
+    const stats = liquidity.get(spreadDepthKey(regionId, 34));
+
+    // 30 天窗口内 3 行：volume 0 / 5 / 0 → 平均 5/3
+    expect(stats?.avgVolume30).toBeCloseTo(5 / 3);
+    expect(stats?.activeDays7).toBe(1);
+  });
+
+  it('去重与空入参；同物品在不同区互不影响', async () => {
+    const { db } = await setup();
+    await seedStats(db, REGIONS.buyA.id, 34, { sellVolume: 1000 });
+    await seedStats(db, REGIONS.buyB.id, 34, { sellVolume: 2000 });
+    await seedHistory(db, REGIONS.buyB.id, 34, [{ date: '2026-09-26', average: 1, volume: 50 }]);
+
+    const liquidity = await readSpreadLiquidityStats(
+      db,
+      [
+        { regionId: REGIONS.buyA.id, typeId: 34 },
+        { regionId: REGIONS.buyA.id, typeId: 34 },
+        { regionId: REGIONS.buyB.id, typeId: 34 },
+      ],
+      T0,
+    );
+
+    expect(liquidity.size).toBe(2);
+    expect(liquidity.get(spreadDepthKey(REGIONS.buyA.id, 34))?.avgVolume30).toBeNull();
+    expect(liquidity.get(spreadDepthKey(REGIONS.buyB.id, 34))?.daysOfSupply).toBe(40);
+    expect((await readSpreadLiquidityStats(db, [], T0)).size).toBe(0);
+  });
+});
+
+/* --------------------- 现实捕获份额（P11-4） --------------------- */
+
+describe('现实捕获份额（P11-4）', () => {
+  it('两簿边际交叉：跨多档走量，margin 归零处停止', async () => {
+    const { db } = await setup();
+    // 成本侧（买入区卖单，升序）：10 / 20 / 30
+    await seedSellOrders(db, REGIONS.buyA.id, 34, [
+      { price: 10, volume: 100 },
+      { price: 20, volume: 100 },
+      { price: 30, volume: 100 },
+    ]);
+    // 收益侧（卖出区买单，降序）：50 / 40 / 30
+    await seedBuyOrders(db, REGIONS.sell.id, 34, [
+      { price: 50, volume: 100 },
+      { price: 40, volume: 100 },
+      { price: 30, volume: 100 },
+    ]);
+    await seedStats(db, REGIONS.sell.id, 34, { p95Buy: 60 });
+
+    const map = await computeSpreadCapture(db, [
+      { typeId: 34, buyRegionId: REGIONS.buyA.id, sellRegionId: REGIONS.sell.id },
+    ]);
+    const result = map.get(spreadCaptureKey(34, REGIONS.buyA.id, REGIONS.sell.id));
+
+    // (10,50)、(20,40) 各吃满 100 → q* = 200；(30,30) 边际为 0 → 停
+    expect(result?.captureQuantity).toBe(200);
+    expect(result?.costTotal).toBe(3000);
+    expect(result?.revenueTotal).toBe(9000);
+    expect(result?.marginTotal).toBe(6000);
+    expect(result?.noSellOrders).toBe(false);
+    expect(result?.noBuyOrders).toBe(false);
+  });
+
+  it('档位中间：一个成本档拆给两笔收益档分别成交', async () => {
+    const { db } = await setup();
+    await seedSellOrders(db, REGIONS.buyA.id, 34, [{ price: 10, volume: 100 }]);
+    await seedBuyOrders(db, REGIONS.sell.id, 34, [
+      { price: 50, volume: 60 },
+      { price: 40, volume: 40 },
+    ]);
+    await seedStats(db, REGIONS.sell.id, 34, { p95Buy: 50 });
+
+    const map = await computeSpreadCapture(db, [
+      { typeId: 34, buyRegionId: REGIONS.buyA.id, sellRegionId: REGIONS.sell.id },
+    ]);
+    const result = map.get(spreadCaptureKey(34, REGIONS.buyA.id, REGIONS.sell.id));
+
+    // 1 档 @10 拆成 60（对 50）+ 40（对 40），两段边际均 > 0
+    expect(result?.captureQuantity).toBe(100);
+    expect(result?.costTotal).toBe(1000);
+    expect(result?.revenueTotal).toBe(50 * 60 + 40 * 40);
+    expect(result?.marginTotal).toBe(4600 - 1000);
+  });
+
+  it('无盈利：最便宜成本 ≥ 最贵收益 → q* = 0，两侧都有单', async () => {
+    const { db } = await setup();
+    await seedSellOrders(db, REGIONS.buyA.id, 34, [{ price: 100, volume: 100 }]);
+    await seedBuyOrders(db, REGIONS.sell.id, 34, [{ price: 50, volume: 100 }]);
+    await seedStats(db, REGIONS.sell.id, 34, { p95Buy: 100 });
+
+    const map = await computeSpreadCapture(db, [
+      { typeId: 34, buyRegionId: REGIONS.buyA.id, sellRegionId: REGIONS.sell.id },
+    ]);
+    const result = map.get(spreadCaptureKey(34, REGIONS.buyA.id, REGIONS.sell.id));
+
+    expect(result?.captureQuantity).toBe(0);
+    expect(result?.marginTotal).toBe(0);
+    expect(result?.noSellOrders).toBe(false);
+    expect(result?.noBuyOrders).toBe(false);
+  });
+
+  it('单侧无单：无卖单 / 无买单 / 两侧皆空', async () => {
+    const { db } = await setup();
+    // 41：只有收益侧有单 → 无卖单
+    await seedBuyOrders(db, REGIONS.sell.id, 41, [{ price: 50, volume: 100 }]);
+    await seedStats(db, REGIONS.sell.id, 41, { p95Buy: 50 });
+    // 42：只有成本侧有单 → 无买单
+    await seedSellOrders(db, REGIONS.buyA.id, 42, [{ price: 10, volume: 100 }]);
+    // 43：两侧皆空
+
+    const map = await computeSpreadCapture(db, [
+      { typeId: 41, buyRegionId: REGIONS.buyA.id, sellRegionId: REGIONS.sell.id },
+      { typeId: 42, buyRegionId: REGIONS.buyA.id, sellRegionId: REGIONS.sell.id },
+      { typeId: 43, buyRegionId: REGIONS.buyA.id, sellRegionId: REGIONS.sell.id },
+    ]);
+
+    const onlyRevenue = map.get(spreadCaptureKey(41, REGIONS.buyA.id, REGIONS.sell.id));
+    expect(onlyRevenue?.noSellOrders).toBe(true);
+    expect(onlyRevenue?.noBuyOrders).toBe(false);
+    expect(onlyRevenue?.captureQuantity).toBe(0);
+
+    const onlyCost = map.get(spreadCaptureKey(42, REGIONS.buyA.id, REGIONS.sell.id));
+    expect(onlyCost?.noSellOrders).toBe(false);
+    expect(onlyCost?.noBuyOrders).toBe(true);
+
+    const both = map.get(spreadCaptureKey(43, REGIONS.buyA.id, REGIONS.sell.id));
+    expect(both?.noSellOrders).toBe(true);
+    expect(both?.noBuyOrders).toBe(true);
+  });
+
+  it('p95_buy 截断确实改变结果：天价钓鱼买单不进走量', async () => {
+    // 有 p95 截断：只留 15@300
+    const trimmed = await setup();
+    await seedSellOrders(trimmed.db, REGIONS.buyA.id, 34, [{ price: 10, volume: 500 }]);
+    await seedBuyOrders(trimmed.db, REGIONS.sell.id, 34, [
+      { price: 1000, volume: 100 },
+      { price: 15, volume: 300 },
+    ]);
+    await seedStats(trimmed.db, REGIONS.sell.id, 34, { p95Buy: 15 });
+    const trimmedMap = await computeSpreadCapture(trimmed.db, [
+      { typeId: 34, buyRegionId: REGIONS.buyA.id, sellRegionId: REGIONS.sell.id },
+    ]);
+    const trimmedResult = trimmedMap.get(spreadCaptureKey(34, REGIONS.buyA.id, REGIONS.sell.id));
+
+    // 无 p95（无统计行）：两笔买单都参与
+    const plain = await setup();
+    await seedSellOrders(plain.db, REGIONS.buyA.id, 34, [{ price: 10, volume: 500 }]);
+    await seedBuyOrders(plain.db, REGIONS.sell.id, 34, [
+      { price: 1000, volume: 100 },
+      { price: 15, volume: 300 },
+    ]);
+    const plainMap = await computeSpreadCapture(plain.db, [
+      { typeId: 34, buyRegionId: REGIONS.buyA.id, sellRegionId: REGIONS.sell.id },
+    ]);
+    const plainResult = plainMap.get(spreadCaptureKey(34, REGIONS.buyA.id, REGIONS.sell.id));
+
+    // 截断后：q* = 300（只对 15 成交）；未截断：q* = 400 且收益被 1000 抬高
+    expect(trimmedResult?.captureQuantity).toBe(300);
+    expect(trimmedResult?.revenueTotal).toBe(15 * 300);
+    expect(plainResult?.captureQuantity).toBe(400);
+    expect(plainResult?.revenueTotal).toBe(1000 * 100 + 15 * 300);
+    expect(trimmedResult?.captureQuantity).not.toBe(plainResult?.captureQuantity);
+  });
+
+  it('口径对称：两侧都排除整批大单（min_volume > 1）', async () => {
+    const { db } = await setup();
+    await seedSellOrders(db, REGIONS.buyA.id, 34, [
+      // 1 ISK 的整批大卖单：若参与会把成本压到接近 1
+      { price: 1, volume: 10_000, minVolume: 10_000 },
+      { price: 10, volume: 100 },
+      { price: 20, volume: 100 },
+    ]);
+    await seedBuyOrders(db, REGIONS.sell.id, 34, [
+      // 50 的整批大买单：若参与会抬高收益
+      { price: 50, volume: 100, minVolume: 9_999 },
+      { price: 40, volume: 100 },
+    ]);
+    await seedStats(db, REGIONS.sell.id, 34, { p95Buy: 50 });
+
+    const map = await computeSpreadCapture(db, [
+      { typeId: 34, buyRegionId: REGIONS.buyA.id, sellRegionId: REGIONS.sell.id },
+    ]);
+    const result = map.get(spreadCaptureKey(34, REGIONS.buyA.id, REGIONS.sell.id));
+
+    // 成本侧只剩 10/20，收益侧只剩 40 → (10,40) 吃满 100 后收益耗尽
+    expect(result?.captureQuantity).toBe(100);
+    expect(result?.costTotal).toBe(1000);
+    expect(result?.revenueTotal).toBe(4000);
+  });
+
+  it('去重、空入参、双向行（同一区域同时作为成本侧与收益侧）', async () => {
+    const { db } = await setup();
+    // buyA：卖单 10（成本）、买单 30（收益）；sell：卖单 20（成本）、买单 50（收益）
+    await seedSellOrders(db, REGIONS.buyA.id, 34, [{ price: 10, volume: 100 }]);
+    await seedBuyOrders(db, REGIONS.buyA.id, 34, [{ price: 30, volume: 100 }]);
+    await seedSellOrders(db, REGIONS.sell.id, 34, [{ price: 20, volume: 100 }]);
+    await seedBuyOrders(db, REGIONS.sell.id, 34, [{ price: 50, volume: 100 }]);
+    await seedStats(db, REGIONS.buyA.id, 34, { p95Buy: 30 });
+    await seedStats(db, REGIONS.sell.id, 34, { p95Buy: 50 });
+
+    const duplicate = { typeId: 34, buyRegionId: REGIONS.buyA.id, sellRegionId: REGIONS.sell.id };
+    const map = await computeSpreadCapture(db, [
+      duplicate,
+      duplicate,
+      { typeId: 34, buyRegionId: REGIONS.sell.id, sellRegionId: REGIONS.buyA.id },
+    ]);
+
+    expect(map.size).toBe(2);
+    const forward = map.get(spreadCaptureKey(34, REGIONS.buyA.id, REGIONS.sell.id));
+    expect(forward?.costTotal).toBe(1000);
+    expect(forward?.revenueTotal).toBe(5000);
+
+    const backward = map.get(spreadCaptureKey(34, REGIONS.sell.id, REGIONS.buyA.id));
+    expect(backward?.costTotal).toBe(2000);
+    expect(backward?.revenueTotal).toBe(3000);
+
+    expect((await computeSpreadCapture(db, [])).size).toBe(0);
+  });
+
+  it('与 P11-2 交叉自洽：Q\' = q* 时 filledQuantity 与成本逐位相等', async () => {
+    const { db } = await setup();
+    await seedSellOrders(db, REGIONS.buyA.id, 34, [
+      { price: 10, volume: 100 },
+      { price: 20, volume: 100 },
+      { price: 30, volume: 100 },
+    ]);
+    await seedBuyOrders(db, REGIONS.sell.id, 34, [
+      { price: 50, volume: 100 },
+      { price: 40, volume: 100 },
+    ]);
+    await seedStats(db, REGIONS.sell.id, 34, { p95Buy: 60 });
+
+    const capture = (
+      await computeSpreadCapture(db, [
+        { typeId: 34, buyRegionId: REGIONS.buyA.id, sellRegionId: REGIONS.sell.id },
+      ])
+    ).get(spreadCaptureKey(34, REGIONS.buyA.id, REGIONS.sell.id));
+    const q = capture?.captureQuantity ?? 0;
+    expect(q).toBe(200);
+
+    const depth = await computeSpreadDepth(db, [{ regionId: REGIONS.buyA.id, typeId: 34 }], q);
+    const sold = depth.get(spreadDepthKey(REGIONS.buyA.id, 34));
+
+    expect(sold?.filledQuantity).toBe(q);
+    expect((sold?.averagePrice ?? 0) * q).toBeCloseTo(capture?.costTotal ?? -1, 10);
+  });
+
+  it('与 P11-2 交叉自洽（成本档拆分的场景）', async () => {
+    const { db } = await setup();
+    await seedSellOrders(db, REGIONS.buyA.id, 35, [{ price: 10, volume: 100 }]);
+    await seedBuyOrders(db, REGIONS.sell.id, 35, [
+      { price: 50, volume: 60 },
+      { price: 40, volume: 40 },
+    ]);
+    await seedStats(db, REGIONS.sell.id, 35, { p95Buy: 50 });
+
+    const capture = (
+      await computeSpreadCapture(db, [
+        { typeId: 35, buyRegionId: REGIONS.buyA.id, sellRegionId: REGIONS.sell.id },
+      ])
+    ).get(spreadCaptureKey(35, REGIONS.buyA.id, REGIONS.sell.id));
+
+    const depth = await computeSpreadDepth(
+      db,
+      [{ regionId: REGIONS.buyA.id, typeId: 35 }],
+      capture?.captureQuantity ?? 0,
+    );
+    const sold = depth.get(spreadDepthKey(REGIONS.buyA.id, 35));
+
+    expect(sold?.filledQuantity).toBe(capture?.captureQuantity);
+    expect((sold?.averagePrice ?? 0) * (capture?.captureQuantity ?? 0)).toBeCloseTo(
+      capture?.costTotal ?? -1,
+      10,
+    );
   });
 });

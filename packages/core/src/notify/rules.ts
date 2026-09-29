@@ -1,6 +1,6 @@
 import { readSetting, writeSetting } from '../db/settings';
 import type { DbAdapter } from '../db/types';
-import type { ValuationBasis } from '../engines/valuation';
+import { basisFallbackChain, type ValuationBasis } from '../engines/valuation';
 
 /**
  * 提醒规则引擎（方案 §7.2「规则」：Undercut 阈值 / 监视列表价格带 / 静默时段）。
@@ -75,12 +75,19 @@ interface NotifyRuleRow extends Omit<NotifyRule, 'kind' | 'enabled' | 'basis'> {
   basis: string | null;
 }
 
+/** 解析库里存的口径字符串（P11-1 起含加权口径）；未知值按 null 处理 */
+function parseRuleBasis(value: string | null): ValuationBasis | null {
+  return value === 'p5_sell' || value === 'best_sell' || value === 'wavg_sell' || value === 'w5_sell'
+    ? value
+    : null;
+}
+
 function rowToRule(row: NotifyRuleRow): NotifyRule {
   return {
     ...row,
     kind: row.kind === 'watch_price' ? 'watch_price' : 'undercut',
     enabled: row.enabled === 1,
-    basis: row.basis === 'best_sell' ? 'best_sell' : row.basis === 'p5_sell' ? 'p5_sell' : null,
+    basis: parseRuleBasis(row.basis),
   };
 }
 
@@ -314,6 +321,8 @@ interface UndercutRow {
   myPrice: number;
   bestSell: number | null;
   p5Sell: number | null;
+  wavgSell: number | null;
+  w5Sell: number | null;
 }
 
 interface WatchPriceRow {
@@ -328,20 +337,32 @@ interface WatchPriceRow {
   maxPrice: number | null;
 }
 
-/** 参照价：主口径 → 另一口径 → 无 */
+/**
+ * 参照价：按**估值引擎同一套回退链**（`basisFallbackChain`）取第一个可用值。
+ * 复用链定义而非在此另写一套，避免口径两处分叉。
+ */
 function pickReference(
-  row: { bestSell: number | null; p5Sell: number | null },
+  row: {
+    bestSell: number | null;
+    p5Sell: number | null;
+    wavgSell: number | null;
+    w5Sell: number | null;
+  },
   basis: ValuationBasis,
 ): { price: number; basis: ValuationBasis } | null {
-  const usable = (value: number | null): boolean =>
-    value !== null && Number.isFinite(value) && value > 0;
-  if (basis === 'best_sell') {
-    if (usable(row.bestSell)) return { price: row.bestSell as number, basis: 'best_sell' };
-    if (usable(row.p5Sell)) return { price: row.p5Sell as number, basis: 'p5_sell' };
-    return null;
+  for (const candidate of basisFallbackChain(basis)) {
+    const value =
+      candidate === 'p5_sell'
+        ? row.p5Sell
+        : candidate === 'best_sell'
+          ? row.bestSell
+          : candidate === 'wavg_sell'
+            ? row.wavgSell
+            : row.w5Sell;
+    if (value !== null && Number.isFinite(value) && value > 0) {
+      return { price: value, basis: candidate };
+    }
   }
-  if (usable(row.p5Sell)) return { price: row.p5Sell as number, basis: 'p5_sell' };
-  if (usable(row.bestSell)) return { price: row.bestSell as number, basis: 'best_sell' };
   return null;
 }
 
@@ -400,7 +421,9 @@ export async function evaluateNotifyRules(
               COALESCE(r.name_zh, r.name_en, 'region ' || o.region_id) AS regionName,
               o.price        AS myPrice,
               s.best_sell    AS bestSell,
-              s.p5_sell      AS p5Sell
+              s.p5_sell      AS p5Sell,
+              s.wavg_sell    AS wavgSell,
+              s.w5_sell      AS w5Sell
          FROM my_orders o
          LEFT JOIN market_stats s ON s.region_id = o.region_id AND s.type_id = o.type_id
          LEFT JOIN sde_types t    ON t.type_id = o.type_id

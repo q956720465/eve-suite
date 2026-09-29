@@ -4,6 +4,7 @@ import type {
   RawCategory,
   RawConstellation,
   RawGroup,
+  RawMarketGroup,
   RawNpcStation,
   RawRegion,
   RawSolarSystem,
@@ -15,6 +16,7 @@ import type {
   SdeCategoryRow,
   SdeConstellationRow,
   SdeGroupRow,
+  SdeMarketGroupRow,
   SdeRegionRow,
   SdeStationRow,
   SdeSystemRow,
@@ -236,4 +238,22 @@ export function mapTypeMaterialRows(raw: RawTypeMaterials): SdeTypeMaterialRow[]
     rows.push({ type_id: typeId, material_type_id: materialTypeId, quantity });
   }
   return rows;
+}
+
+/**
+ * 市场分组（P9-1 市场浏览页）。
+ * 根节点无 `parentGroupID` → `parent_group_id` 落 null；缺 `name` 的行丢弃。
+ */
+export function mapMarketGroup(raw: RawMarketGroup): SdeMarketGroupRow | null {
+  const id = intOrNull(raw._key);
+  const nameEn = pickEn(raw.name);
+  if (id === null || nameEn === null) return null;
+  return {
+    market_group_id: id,
+    parent_group_id: intOrNull(raw.parentGroupID),
+    name_en: nameEn,
+    name_zh: pickZh(raw.name),
+    icon_id: intOrNull(raw.iconID),
+    has_types: raw.hasTypes === true ? 1 : 0,
+  };
 }

@@ -1,15 +1,18 @@
 import {
   DEFAULT_BLUEPRINT_ACTIVITY,
   DEFAULT_VALUATION_BASIS,
+  HUB_MAIN_STATIONS,
   MAX_MATERIAL_EFFICIENCY,
   TRADE_HUBS,
   computeInventoryGap,
   getBlueprintActivities,
+  getStationNames,
   getTypeNames,
   searchTypes,
   type BlueprintActivity,
   type BlueprintActivityInfo,
   type InventoryGapResult,
+  type StationNameEntry,
   type TypeNameEntry,
   type ValuationBasis,
 } from '@eve-suite/core';
@@ -38,6 +41,16 @@ const ACTIVITY_LABELS: Record<BlueprintActivity, string> = {
 const BASIS_LABELS: Record<ValuationBasis, string> = {
   p5_sell: '5% 分位（默认，抗钓鱼单）',
   best_sell: '最低卖价',
+  wavg_sell: '挂单量加权均价（尾部敏感）',
+  w5_sell: '挂单量加权 5% 分位',
+};
+
+/** 比价粒度（P10-1）：区域级 = 五大枢纽区域；站点级 = 五大枢纽主站 */
+type PriceGranularity = 'region' | 'station';
+
+const GRANULARITY_LABELS: Record<PriceGranularity, string> = {
+  region: '区域级（五大枢纽）',
+  station: '站点级（五大枢纽主站）',
 };
 
 const HUB_NAMES = new Map(TRADE_HUBS.map((hub) => [hub.regionId, hub.nameEn]));
@@ -84,11 +97,44 @@ export default function InventoryPanel() {
   const [runs, setRuns] = useState('1');
   const [me, setMe] = useState('0');
   const [basis, setBasis] = useState<ValuationBasis>(DEFAULT_VALUATION_BASIS);
+  const [granularity, setGranularity] = useState<PriceGranularity>('region');
 
   const [result, setResult] = useState<InventoryGapResult | null>(null);
   const [names, setNames] = useState<Map<number, TypeNameEntry>>(new Map());
+  const [stationNames, setStationNames] = useState<Map<number, StationNameEntry>>(new Map());
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+
+  /** 站点级比价才需要站名（区域级只用区域名，不查站表） */
+  useEffect(() => {
+    if (granularity !== 'station') return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { db } = await initCoreRuntime();
+        const map = await getStationNames(
+          db,
+          HUB_MAIN_STATIONS.map((station) => station.stationId),
+        );
+        if (!cancelled) setStationNames(map);
+      } catch (error) {
+        if (!cancelled) setMessage(`载入站名失败：${describeError(error)}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [granularity]);
+
+  /** 地点显示名：区域级取区域名，站点级取站名（缺失回退站点 id） */
+  const locationLabel = useCallback(
+    (regionId: number, stationId: number | null): string => {
+      if (stationId === null) return hubName(regionId);
+      const entry = stationNames.get(stationId);
+      return entry === undefined ? `站点 ${stationId}` : (entry.nameZh ?? entry.nameEn);
+    },
+    [stationNames],
+  );
 
   /** 搜索蓝图：searchTypes 后按 SDE「Blueprint」分类过滤（带 200ms 防抖） */
   useEffect(() => {
@@ -154,6 +200,8 @@ export default function InventoryPanel() {
         runs: parsedRuns,
         me: parsedMe,
         basis,
+        // 站点级：在五大枢纽主站之间比价（P10-1）；区域级走既有默认路径（行为不变）
+        ...(granularity === 'station' ? { locations: HUB_MAIN_STATIONS } : {}),
       });
       const typeIds = outcome.lines.map((line) => line.typeId);
       if (outcome.product !== null) typeIds.push(outcome.product.typeId);
@@ -167,7 +215,7 @@ export default function InventoryPanel() {
     } finally {
       setBusy(false);
     }
-  }, [blueprintTypeId, activity, parsedRuns, parsedMe, basis]);
+  }, [blueprintTypeId, activity, parsedRuns, parsedMe, basis, granularity]);
 
   // 参数变化即重算（纯本地计算，无网络请求）
   useEffect(() => {
@@ -184,6 +232,15 @@ export default function InventoryPanel() {
   );
 
   const blueprintName = blueprintTypeId === null ? '—' : nameOf(blueprintTypeId);
+
+  /**
+   * 结果自身的比价粒度（从 `result.locations` 推导，而非当前下拉值）：
+   * 重算期间面板会短暂保留上一次结果，用结果自述粒度可避免「标签是本层设置、数据是上一层」的不一致。
+   */
+  const resultGranularity: PriceGranularity =
+    result !== null && result.locations.some((location) => location.stationId !== null)
+      ? 'station'
+      : 'region';
 
   const blueprintOptions = useMemo(() => {
     const base = hits.map((hit) => ({ typeId: hit.typeId, label: hit.nameZh ?? hit.nameEn }));
@@ -261,6 +318,19 @@ export default function InventoryPanel() {
               ))}
             </select>
           </label>
+          <label>
+            比价粒度
+            <select
+              value={granularity}
+              onChange={(event) => setGranularity(event.target.value as PriceGranularity)}
+            >
+              {(Object.keys(GRANULARITY_LABELS) as PriceGranularity[]).map((key) => (
+                <option key={key} value={key}>
+                  {GRANULARITY_LABELS[key]}
+                </option>
+              ))}
+            </select>
+          </label>
           <button type="button" onClick={() => void compute()} disabled={busy}>
             {busy ? '生成中…' : '生成缺口'}
           </button>
@@ -269,7 +339,14 @@ export default function InventoryPanel() {
         <p className="hint">
           当前蓝图：{blueprintName} · typeID {blueprintTypeId ?? '—'}；需求按 P4-2 已验收的
           runs/ME 口径折算；已有量 = <strong>全部已授权角色</strong>资产之和（不含公司资产）；
-          比价范围 = 五大枢纽；缺价物品单列且不计入总价。
+          比价范围 = {GRANULARITY_LABELS[granularity]}；缺价物品单列且不计入总价。
+          {granularity === 'station' && (
+            <>
+              <br />
+              站点级口径：单价按<strong>该站在架订单簿</strong>算分位（样本比区域级少，冷门物品会
+              更抖）；该站无卖单即计缺价，<strong>不会</strong>回退到区域聚合价。
+            </>
+          )}
         </p>
       </div>
 
@@ -287,13 +364,14 @@ export default function InventoryPanel() {
                 {result.maxProductionLimit !== null
                   ? ` · run 上限 ${result.maxProductionLimit}`
                   : ' · run 上限未知'}
+                {` · 比价 ${GRANULARITY_LABELS[resultGranularity]}`}
               </span>
             </div>
             <table className="result">
               <thead>
                 <tr>
                   <th>需采购物品种数</th>
-                  <th>建议购买枢纽</th>
+                  <th>建议购买地点</th>
                   <th>采购总价</th>
                   <th>理论下限（逐项最低）</th>
                   <th>缺价物品</th>
@@ -304,7 +382,11 @@ export default function InventoryPanel() {
                   <td>
                     {result.gapTypeCount} / {result.materialTypeCount}
                   </td>
-                  <td>{result.gapTypeCount === 0 ? '—（无需采购）' : hubName(result.suggestedRegionId)}</td>
+                  <td>
+                    {result.gapTypeCount === 0 || result.suggestedRegionId === null
+                      ? '—（无需采购）'
+                      : locationLabel(result.suggestedRegionId, result.suggestedStationId)}
+                  </td>
                   <td className="sell">{formatIsk(result.totalCost)}</td>
                   <td>{formatIsk(result.floorCost)}</td>
                   <td>{result.missingTypeIds.length}</td>
@@ -334,7 +416,7 @@ export default function InventoryPanel() {
 
             {result.missingTypeIds.length > 0 && (
               <p className="hint">
-                以下物品在<strong>所有枢纽均无报价</strong>（不计入总价，请先在「行情」页采集）：
+                以下物品在<strong>所有地点均无报价</strong>（不计入总价，请先在「行情」页采集）：
                 {result.missingTypeIds.map((typeId) => nameOf(typeId)).join('、')}
               </p>
             )}
@@ -352,10 +434,10 @@ export default function InventoryPanel() {
                     <th>需求</th>
                     <th>已有</th>
                     <th>缺口</th>
-                    <th>建议枢纽单价</th>
+                    <th>建议地点单价</th>
                     <th>小计</th>
-                    <th>最便宜枢纽</th>
-                    <th>各枢纽单价</th>
+                    <th>最便宜地点</th>
+                    <th>各地点单价</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -367,12 +449,18 @@ export default function InventoryPanel() {
                       <td className="sell">{line.gap.toLocaleString()}</td>
                       <td>{line.unitPrice === null ? '无报价' : formatIsk(line.unitPrice)}</td>
                       <td className="sell">{formatIsk(line.subtotal)}</td>
-                      <td>{line.cheapestRegionId === null ? '—' : hubName(line.cheapestRegionId)}</td>
+                      <td>
+                        {line.cheapestRegionId === null
+                          ? '—'
+                          : locationLabel(line.cheapestRegionId, line.cheapestStationId)}
+                      </td>
                       <td>
                         {line.prices
                           .map(
                             (entry) =>
-                              `${hubName(entry.regionId)} ${entry.price === null ? '无报价' : formatIsk(entry.price)}`,
+                              `${locationLabel(entry.regionId, entry.stationId)} ${
+                                entry.price === null ? '无报价' : formatIsk(entry.price)
+                              }`,
                           )
                           .join(' · ')}
                       </td>
@@ -384,19 +472,19 @@ export default function InventoryPanel() {
           </div>
 
           <div className="panel">
-            <h2>枢纽对照（换枢纽买）</h2>
+            <h2>地点对照（换地点买）</h2>
             <table className="result">
               <thead>
                 <tr>
-                  <th>枢纽</th>
+                  <th>地点</th>
                   <th>采购总价</th>
                   <th>缺价种数</th>
                 </tr>
               </thead>
               <tbody>
                 {result.hubSummaries.map((hub) => (
-                  <tr key={hub.regionId}>
-                    <td>{hubName(hub.regionId)}</td>
+                  <tr key={hub.stationId ?? hub.regionId}>
+                    <td>{locationLabel(hub.regionId, hub.stationId)}</td>
                     <td className="sell">{formatIsk(hub.totalCost)}</td>
                     <td>{hub.missingCount}</td>
                   </tr>
@@ -404,7 +492,7 @@ export default function InventoryPanel() {
               </tbody>
             </table>
             <p className="hint">
-              建议购买枢纽先比「能否一次买齐」（缺价种数少者优先），再比总价 —— 避免选到「因缺数据而显得便宜」的枢纽。
+              建议购买地点先比「能否一次买齐」（缺价种数少者优先），再比总价 —— 避免选到「因缺数据而显得便宜」的地点。
               实际采购还需自行考虑运费与货舱。
             </p>
           </div>

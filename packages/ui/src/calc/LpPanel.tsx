@@ -14,7 +14,7 @@ import {
   type LpStoreState,
   type TypeNameEntry,
 } from '@eve-suite/core';
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { initCoreRuntime } from '../core/runtime';
 import type { LpStoreSyncHandle } from '../lp/useLpStoreSync';
@@ -54,6 +54,30 @@ function parseOptionalNumber(raw: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+/**
+ * 蓝图类产出估值（P7-4）的假设参数：`runs` 缺省取该 offer 的 `quantity`、`ME` 缺省 0，
+ * 与 Fuzzwork 同口径（ESI/SDE 都不返回 LP 商店 BPC 的授权 run 数，故必须可覆盖）。
+ */
+const DEFAULT_BLUEPRINT_RUNS_HINT = '默认=报价数量';
+const DEFAULT_BLUEPRINT_ME_HINT = '默认 0';
+
+/**
+ * 蓝图估算标记：写明假设参数，避免估算值被误读为实测价。
+ * `estimation === null`（非蓝图产出，或产物无报价而未估算）时不渲染。
+ */
+function estimateBadge(estimation: LpOfferValuation['estimation']): ReactNode {
+  if (estimation === null) return null;
+  const totalProduct = estimation.productQuantityPerRun * estimation.runs;
+  return (
+    <span
+      className="hint"
+      title={`蓝图估算：产物 ${estimation.productTypeId} × ${totalProduct}（runs ${estimation.runs} · ME ${estimation.me}%）`}
+    >
+      {' （估算）'}
+    </span>
+  );
+}
+
 /** LP 比价计算器（P4-3 引擎 + P4-5-3 界面） */
 export default function LpPanel({ lpStore }: { lpStore: LpStoreSyncHandle }) {
   const [characters, setCharacters] = useState<CharacterSummary[]>([]);
@@ -71,6 +95,9 @@ export default function LpPanel({ lpStore }: { lpStore: LpStoreSyncHandle }) {
   const [limitInput, setLimitInput] = useState(DEFAULT_RANK_LIMIT);
   const [minIskPerLpInput, setMinIskPerLpInput] = useState('');
   const [includeAk, setIncludeAk] = useState(false);
+  /** 蓝图类产出估算的假设（留空 = 引擎默认：runs 取该报价的数量、ME 0） */
+  const [blueprintRunsInput, setBlueprintRunsInput] = useState('');
+  const [blueprintMeInput, setBlueprintMeInput] = useState('');
 
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [message, setMessage] = useState('');
@@ -78,6 +105,8 @@ export default function LpPanel({ lpStore }: { lpStore: LpStoreSyncHandle }) {
 
   const limit = useMemo(() => parseOptionalNumber(limitInput), [limitInput]);
   const minIskPerLp = useMemo(() => parseOptionalNumber(minIskPerLpInput), [minIskPerLpInput]);
+  const blueprintRuns = useMemo(() => parseOptionalNumber(blueprintRunsInput), [blueprintRunsInput]);
+  const blueprintMe = useMemo(() => parseOptionalNumber(blueprintMeInput), [blueprintMeInput]);
   const regionName = TRADE_HUBS.find((hub) => hub.regionId === regionId)?.nameEn ?? '';
 
   /** 载入已授权角色（无角色时面板只提示授权） */
@@ -147,6 +176,8 @@ export default function LpPanel({ lpStore }: { lpStore: LpStoreSyncHandle }) {
           limit,
           minIskPerLp,
           includeAkOffers: includeAk,
+          blueprintRuns,
+          blueprintMe,
         });
         setPortfolio(entries);
         await resolveNames(
@@ -159,7 +190,7 @@ export default function LpPanel({ lpStore }: { lpStore: LpStoreSyncHandle }) {
         setMessage(`LP 组合计算失败：${describeError(error)}`);
       }
     })();
-  }, [characterId, regionId, limit, minIskPerLp, includeAk, summaryKey, lpStore.lastSummary, resolveNames]);
+  }, [characterId, regionId, limit, minIskPerLp, includeAk, blueprintRuns, blueprintMe, summaryKey, lpStore.lastSummary, resolveNames]);
 
   /** 单军团 ISK/LP 排名 */
   useEffect(() => {
@@ -176,12 +207,17 @@ export default function LpPanel({ lpStore }: { lpStore: LpStoreSyncHandle }) {
           limit,
           minIskPerLp,
           includeAkOffers: includeAk,
+          blueprintRuns,
+          blueprintMe,
         });
         setRanking(result);
         await resolveNames(
           result.offers.flatMap((offer) => [
             offer.typeId,
             ...offer.requiredItems.map((item) => item.typeId),
+            ...(offer.estimation === null
+              ? []
+              : [offer.estimation.productTypeId, ...offer.estimation.missingTypeIds]),
           ]),
         );
         setMessage('');
@@ -191,7 +227,7 @@ export default function LpPanel({ lpStore }: { lpStore: LpStoreSyncHandle }) {
         setLoading(false);
       }
     })();
-  }, [corporationId, regionId, limit, minIskPerLp, includeAk, summaryKey, lpStore.lastSummary, resolveNames]);
+  }, [corporationId, regionId, limit, minIskPerLp, includeAk, blueprintRuns, blueprintMe, summaryKey, lpStore.lastSummary, resolveNames]);
 
   const nameOf = useCallback(
     (typeId: number): string => {
@@ -283,6 +319,22 @@ export default function LpPanel({ lpStore }: { lpStore: LpStoreSyncHandle }) {
               onChange={(event) => setMinIskPerLpInput(event.target.value)}
             />
           </label>
+          <label>
+            蓝图假设 ME %
+            <input
+              value={blueprintMeInput}
+              placeholder={DEFAULT_BLUEPRINT_ME_HINT}
+              onChange={(event) => setBlueprintMeInput(event.target.value)}
+            />
+          </label>
+          <label>
+            蓝图假设 runs
+            <input
+              value={blueprintRunsInput}
+              placeholder={DEFAULT_BLUEPRINT_RUNS_HINT}
+              onChange={(event) => setBlueprintRunsInput(event.target.value)}
+            />
+          </label>
           <label className="check">
             <input
               type="checkbox"
@@ -298,8 +350,14 @@ export default function LpPanel({ lpStore }: { lpStore: LpStoreSyncHandle }) {
 
         <p className="hint">
           军团无中文名来源（SDE 未落表），统一显示编号。ISK/LP = （产出估值 − 材料成本 − ISK 支出）÷
-          LP 成本；产出无市场报价（多为蓝图类 BPC）时为「—」，不虚构估算值。`ak_cost &gt; 0`
-          的报价默认跳过。
+          LP 成本；产出<strong>无市场报价</strong>时为「—」，不虚构值。`ak_cost &gt; 0` 的报价默认跳过。
+        </p>
+        <p className="hint">
+          产出为<strong>蓝图</strong>的报价（LP 商店共 133 条）按 Fuzzwork 同口径估算：产出估值 =
+          产物单价 ×（产物单次产量 × runs）− 蓝图制造材料成本，其中
+          <strong>runs 默认取该报价的数量、ME 默认 0</strong>
+          （ESI/SDE 都不返回 BPC 授权 run 数，故可在上方覆盖）；表内以「（估算）」标注。制造材料缺价按 0
+          计入并在悬浮提示中列出。
         </p>
         {characters.length === 0 && (
           <p className="hint">尚无已授权角色：请先在「资产」页完成授权，LP 余额随个人数据同步写入。</p>
@@ -378,9 +436,14 @@ export default function LpPanel({ lpStore }: { lpStore: LpStoreSyncHandle }) {
                         <td>{corpLabel(entry.corporationId)}</td>
                         <td>{formatLp(entry.loyaltyPoints)}</td>
                         <td>
-                          {entry.bestOffer === null
-                            ? '无可比价报价'
-                            : `${nameOf(entry.bestOffer.typeId)} × ${entry.bestOffer.quantity.toLocaleString()}`}
+                          {entry.bestOffer === null ? (
+                            '无可比价报价'
+                          ) : (
+                            <>
+                              {`${nameOf(entry.bestOffer.typeId)} × ${entry.bestOffer.quantity.toLocaleString()}`}
+                              {estimateBadge(entry.bestOffer.estimation)}
+                            </>
+                          )}
                         </td>
                         <td>{formatIsk(entry.bestOffer?.iskPerLp ?? null)}</td>
                         <td className="sell">{formatIsk(entry.totalNetIsk)}</td>
@@ -411,6 +474,7 @@ export default function LpPanel({ lpStore }: { lpStore: LpStoreSyncHandle }) {
                                       <td>{index + 2}</td>
                                       <td>
                                         {nameOf(offer.typeId)} × {offer.quantity.toLocaleString()}
+                                        {estimateBadge(offer.estimation)}
                                       </td>
                                       <td>{formatLp(offer.lpCost)}</td>
                                       <td>{formatIsk(offer.iskPerLp)}</td>
@@ -486,7 +550,10 @@ export default function LpPanel({ lpStore }: { lpStore: LpStoreSyncHandle }) {
                   <Fragment key={key}>
                     <tr className={open ? 'selected' : ''} onClick={() => toggle(key)}>
                       <td>{index + 1}</td>
-                      <td>{nameOf(offer.typeId)}</td>
+                      <td>
+                        {nameOf(offer.typeId)}
+                        {estimateBadge(offer.estimation)}
+                      </td>
                       <td>{offer.quantity.toLocaleString()}</td>
                       <td>{formatLp(offer.lpCost)}</td>
                       <td>{formatIsk(offer.iskCost)}</td>
@@ -523,6 +590,16 @@ export default function LpPanel({ lpStore }: { lpStore: LpStoreSyncHandle }) {
                                 ))}
                               </tbody>
                             </table>
+                          )}
+                          {offer.estimation !== null && (
+                            <p className="hint">
+                              蓝图估算（runs {offer.estimation.runs} · ME {offer.estimation.me}%）：产物{' '}
+                              {nameOf(offer.estimation.productTypeId)} ×{' '}
+                              {(offer.estimation.productQuantityPerRun * offer.estimation.runs).toLocaleString()}{' '}
+                              = {formatIsk(offer.estimation.productValue)}，制造材料{' '}
+                              {formatIsk(offer.estimation.buildMaterialCost)} → 产出估值{' '}
+                              {formatIsk(offer.estimation.productValue - offer.estimation.buildMaterialCost)}
+                            </p>
                           )}
                           {offer.iskPerLp === null && (
                             <p className="hint">产出无市场报价 → 无法计算 ISK/LP（不虚构估算值）。</p>

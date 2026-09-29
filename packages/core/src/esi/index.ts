@@ -38,6 +38,7 @@ export {
   parseOAuthError,
   parseTokenResponse,
   refreshAccessToken,
+  revokeToken,
   SSO_AUTHORIZE_ENDPOINT,
   SSO_ISSUER,
   SSO_REVOKE_ENDPOINT,
@@ -45,7 +46,14 @@ export {
   SSO_VERIFY_ENDPOINT,
   TokenRequestError,
 } from './oauth';
-export type { AuthorizeUrlParams, PkcePair, TokenHttp, TokenSet } from './oauth';
+export type {
+  AuthorizeUrlParams,
+  PkcePair,
+  RevokeOutcome,
+  RevokeTokenParams,
+  TokenHttp,
+  TokenSet,
+} from './oauth';
 
 export {
   DEFAULT_AUTH_TIMEOUT_MS,

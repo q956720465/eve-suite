@@ -1,8 +1,8 @@
-export { HUB_COLLECT_INTERVAL_MS, MAX_PAGES_PER_REGION, TRADE_HUBS, findTradeHub, isTradeHub } from './hubs';
-export type { TradeHub } from './hubs';
+export { HUB_COLLECT_INTERVAL_MS, HUB_MAIN_STATIONS, MAX_PAGES_PER_REGION, TRADE_HUBS, findTradeHub, isTradeHub } from './hubs';
+export type { HubMainStation, TradeHub } from './hubs';
 
-export { computeMarketStats, percentile } from './stats';
-export type { MarketStatsRow } from './stats';
+export { computeMarketStats, percentile, weightedAverage, weightedPercentile } from './stats';
+export type { MarketStatsRow, OrderLevel } from './stats';
 
 export { historyScope, loadEtags, ordersPageScope, saveEtags } from './etag-cache';
 
@@ -65,20 +65,34 @@ export {
 export type { WatchlistItem } from './watchlist';
 
 export {
+  DEFAULT_SPREAD_DEPTH_QUANTITY,
   DEFAULT_SPREAD_FILTERS,
+  MAX_SPREAD_DEPTH_QUANTITY,
   SPREAD_ANCHOR_RATIO,
   SPREAD_MIN_ACTIVE_DAYS,
+  computeSpreadCapture,
+  computeSpreadDepth,
   getSpreadFreshness,
   judgeSpreadHistory,
+  normalizeSpreadDepthQuantity,
   rankCrossRegionSpreads,
   readSpreadHistoryStats,
+  readSpreadLiquidityStats,
+  spreadCaptureKey,
+  spreadDepthKey,
   validateSpreadHistory,
 } from './spread';
 export type {
+  SpreadCaptureResult,
+  SpreadCaptureTarget,
+  SpreadDepthResult,
+  SpreadDepthTarget,
   SpreadFreshness,
   SpreadHistoryReason,
   SpreadHistoryStats,
   SpreadHistoryVerdict,
+  SpreadLiquidityStats,
+  SpreadLiquidityTarget,
   SpreadQueryOptions,
   SpreadRow,
   SpreadSortKey,
@@ -132,3 +146,28 @@ export type {
   OrderBookEntry,
   TypeMarketStats,
 } from './repo';
+
+export {
+  MARKET_BROWSE_DEFAULT_LIMIT,
+  MARKET_BROWSE_MAX_LIMIT,
+  getMarketGroupPath,
+  getMarketStationScope,
+  getStationOrderBook,
+  getStationTypeRow,
+  listMarketGroupChildren,
+  listMarketTypes,
+  searchMarketTypes,
+} from './browse';
+export type {
+  MarketGroupNode,
+  MarketGroupRef,
+  MarketSearchOptions,
+  MarketStationScope,
+  MarketTypeList,
+  MarketTypeListOptions,
+  MarketTypeQuote,
+  MarketTypeRow,
+  MarketTypeSortKey,
+  SortDirection,
+  StationOrderBook,
+} from './browse';

@@ -29,6 +29,7 @@ const COUNT_LABELS: Record<string, string> = {
   blueprint_activities: '蓝图活动',
   blueprint_io: '配方材料',
   type_materials: '类型材料',
+  market_groups: '市场分组',
 };
 
 function describeError(error: unknown): string {

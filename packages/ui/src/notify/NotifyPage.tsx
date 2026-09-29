@@ -36,6 +36,8 @@ const WEBHOOK_KINDS: readonly { id: WebhookConfig['kind']; label: string }[] = [
 const BASIS_LABELS: Record<ValuationBasis, string> = {
   p5_sell: '5% 分位（默认，抗钓鱼单）',
   best_sell: '最低卖价',
+  wavg_sell: '挂单量加权均价',
+  w5_sell: '挂单量加权 5% 分位',
 };
 
 const HUB_NAMES = new Map(TRADE_HUBS.map((hub) => [hub.regionId, hub.nameEn]));

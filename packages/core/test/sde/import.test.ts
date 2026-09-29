@@ -113,6 +113,67 @@ describe('SDE 导入', () => {
     expect(await countRows(db, 'sde_meta')).toBe(0);
   });
 
+  it('市场分组：根节点 parent 为 null，子节点带 parent，缺名行丢弃', async () => {
+    const db = await createMigratedDb();
+    const summary = await importSde(db, createMemorySource());
+
+    // 样本 5 行 → 缺 name 的 999 被丢弃
+    expect(summary.counts.market_groups).toBe(4);
+    expect(await countRows(db, 'sde_market_groups')).toBe(4);
+
+    const rows = await db.select<{
+      market_group_id: number;
+      parent_group_id: number | null;
+      name_en: string;
+      name_zh: string | null;
+      icon_id: number | null;
+      has_types: number;
+    }>(
+      'SELECT market_group_id, parent_group_id, name_en, name_zh, icon_id, has_types FROM sde_market_groups ORDER BY market_group_id',
+    );
+
+    expect(rows).toEqual([
+      {
+        market_group_id: 2,
+        parent_group_id: null,
+        name_en: 'Blueprints & Reactions',
+        name_zh: '蓝图和反应',
+        icon_id: 2703,
+        has_types: 0,
+      },
+      {
+        market_group_id: 4,
+        parent_group_id: null,
+        name_en: 'Ships',
+        name_zh: '舰船',
+        icon_id: 1443,
+        has_types: 0,
+      },
+      {
+        market_group_id: 5,
+        parent_group_id: 1361,
+        name_en: 'Standard Frigates',
+        name_zh: '标准护卫舰',
+        icon_id: 1443,
+        has_types: 0,
+      },
+      {
+        market_group_id: 1857,
+        parent_group_id: 533,
+        name_en: 'Minerals',
+        name_zh: '矿物',
+        icon_id: 404,
+        has_types: 1,
+      },
+    ]);
+
+    // 元信息落 rows_market_groups，供数据页展示
+    const meta = await db.select<{ value: string }>(
+      "SELECT value FROM sde_meta WHERE key = 'rows_market_groups'",
+    );
+    expect(meta[0]?.value).toBe('4');
+  });
+
   it('进度回调：按文件上报处理行数', async () => {
     const db = await createMigratedDb();
     const events: SdeImportProgress[] = [];
@@ -123,6 +184,7 @@ describe('SDE 导入', () => {
     expect(files.has('npcStations.jsonl')).toBe(true);
     expect(files.has('blueprints.jsonl')).toBe(true);
     expect(files.has('typeMaterials.jsonl')).toBe(true);
+    expect(files.has('marketGroups.jsonl')).toBe(true);
     const typeEvent = events.find((event) => event.file === 'types.jsonl');
     expect(typeEvent?.written).toBe(4);
   });

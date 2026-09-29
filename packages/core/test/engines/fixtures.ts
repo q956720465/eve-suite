@@ -16,6 +16,8 @@ export interface MarketOrderInput {
   locationId?: number;
   volumeRemain?: number;
   isBuyOrder?: boolean;
+  /** 最小成交量，默认 1；传 > 1 用于构造「整批大单」场景 */
+  minVolume?: number;
 }
 
 /** 插入一条市场订单快照（默认吉他 4-4 的卖单） */
@@ -24,7 +26,7 @@ export async function insertOrder(db: DbAdapter, input: MarketOrderInput): Promi
   await db.execute(
     `INSERT INTO market_orders (order_id, region_id, type_id, location_id, price, volume_total,
                                 volume_remain, min_volume, is_buy_order, duration, issued, range, fetched_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 90, '2026-09-01T00:00:00Z', 'station', '2026-09-27T00:00:00Z')`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 90, '2026-09-01T00:00:00Z', 'station', '2026-09-27T00:00:00Z')`,
     [
       input.orderId,
       input.regionId ?? JITA,
@@ -33,6 +35,7 @@ export async function insertOrder(db: DbAdapter, input: MarketOrderInput): Promi
       input.price,
       volume,
       volume,
+      input.minVolume ?? 1,
       input.isBuyOrder === true ? 1 : 0,
     ],
   );
@@ -43,7 +46,12 @@ export async function insertSellOrders(
   db: DbAdapter,
   typeId: number,
   prices: readonly number[],
-  options: { regionId?: number; locationId?: number; firstOrderId?: number } = {},
+  options: {
+    regionId?: number;
+    locationId?: number;
+    firstOrderId?: number;
+    minVolume?: number;
+  } = {},
 ): Promise<void> {
   let orderId = options.firstOrderId ?? 1;
   for (const price of prices) {
@@ -53,6 +61,7 @@ export async function insertSellOrders(
       price,
       regionId: options.regionId,
       locationId: options.locationId,
+      minVolume: options.minVolume,
     });
   }
 }
@@ -62,14 +71,25 @@ export interface MarketStatsInput {
   regionId?: number;
   bestSell?: number | null;
   p5Sell?: number | null;
+  /** 挂单量加权均价（P11-1） */
+  wavgSell?: number | null;
+  /** 挂单量加权 5% 分位（P11-1） */
+  w5Sell?: number | null;
 }
 
-/** 插入一条聚合指标行（只填估值关心的两列；其余列走表默认值） */
+/** 插入一条聚合指标行（只填估值关心的列；其余列走表默认值） */
 export async function insertStats(db: DbAdapter, input: MarketStatsInput): Promise<void> {
   await db.execute(
-    `INSERT INTO market_stats (region_id, type_id, best_sell, p5_sell, updated_at)
-     VALUES (?, ?, ?, ?, '2026-09-27T00:00:00Z')`,
-    [input.regionId ?? JITA, input.typeId, input.bestSell ?? null, input.p5Sell ?? null],
+    `INSERT INTO market_stats (region_id, type_id, best_sell, p5_sell, wavg_sell, w5_sell, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, '2026-09-27T00:00:00Z')`,
+    [
+      input.regionId ?? JITA,
+      input.typeId,
+      input.bestSell ?? null,
+      input.p5Sell ?? null,
+      input.wavgSell ?? null,
+      input.w5Sell ?? null,
+    ],
   );
 }
 

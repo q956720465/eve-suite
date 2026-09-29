@@ -1,16 +1,29 @@
 import type { DbAdapter } from '../db/types';
-import { percentile } from '../market/stats';
+import {
+  MAX_TRADABLE_MIN_VOLUME,
+  percentile,
+  weightedAverage,
+  weightedPercentile,
+  type OrderLevel,
+} from '../market/stats';
 
 /**
  * 估值引擎（方案 §1 / §6.3 / §9）——全站唯一的价格出口。
  *
- * 口径（P4-1 定稿）：
+ * 口径（P4-1 定稿，P11-1 扩展口径枚举）：
  * - 价格口径 `basis`：`p5_sell`（卖价 5% 分位，默认，抗「1 ISK 钓鱼单」）；
- *   `best_sell`（最低卖价，P3 旧口径，保留供对照）
- * - 回退链：主口径 → 另一口径 → 无报价（null，调用方计 0 并计入 missing）
+ *   `best_sell`（最低卖价，P3 旧口径，保留供对照）；
+ *   `wavg_sell` / `w5_sell`（**挂单量加权**均价与 5% 分位，P11-1 新增）
+ * - 回退链（见 `BASIS_FALLBACK`）：`p5_sell ↔ best_sell` 互回退；
+ *   `wavg_sell` / `w5_sell` **只回退到 `p5_sell`**（不回退到 `best_sell`，避免加权口径静默退化成最低卖价）
  * - 基准：`regionId` 默认吉他 The Forge；指定 `stationId` 后按订单簿 `location_id` 重算
  *   （`market_stats` 只有区域级指标，站点级必须回到 `market_orders`）
  * - 离群过滤（可选）：剔除高于「中位数 × multiple」的卖单（方案 §9，默认 10 倍）
+ * - 整批大单过滤（P7-1 新增）：订单簿精确路径排除 `min_volume > 1` 的卖单，
+ *   与 `computeMarketStats` 同口径（见 `MAX_TRADABLE_MIN_VOLUME`）
+ *
+ * ⚠️ `wavg_sell` 是**尾部敏感**指标（高价大挂单量会主导结果），只宜作参考口径，不作默认。
+ * 站点级（`stationId` 非空）走订单簿路径，故**不支持** `wavg_sell` / `w5_sell`（其加权值只在区域聚合里算）。
  *
  * 引擎**只读本地库**，不发任何 ESI 请求（离线可算）。
  */
@@ -24,8 +37,16 @@ export const DEFAULT_VALUATION_BASIS: ValuationBasis = 'p5_sell';
 /** 默认离群倍数阈值：10 倍中位数（方案 §9） */
 export const DEFAULT_OUTLIER_MULTIPLE = 10;
 
-/** 价格口径 */
-export type ValuationBasis = 'p5_sell' | 'best_sell';
+/**
+ * 价格口径：
+ * - `p5_sell`：卖价 5% 分位（**按订单数**线性插值）—— 默认，抗「1 ISK 钓鱼单」
+ * - `best_sell`：最低卖价（P3 旧口径，保留供对照）
+ * - `wavg_sell`：卖单**挂单量加权均价**（P11-1；= Fuzzwork `weightedAverage` 同定义）
+ * - `w5_sell`：卖单**挂单量加权 5% 分位**（P11-1；我方自定义口径，不插值）
+ *
+ * 口径间的回退关系见 `BASIS_FALLBACK`。
+ */
+export type ValuationBasis = 'p5_sell' | 'best_sell' | 'wavg_sell' | 'w5_sell';
 
 /** 价格来源：stats=聚合指标快路径；orders=订单簿重算；fallback=主口径缺失改用它口径；missing=无报价 */
 export type ValuationSource = 'stats' | 'orders' | 'fallback' | 'missing';
@@ -90,6 +111,8 @@ interface StatsPriceRow {
   typeId: number;
   bestSell: number | null;
   p5Sell: number | null;
+  wavgSell: number | null;
+  w5Sell: number | null;
 }
 
 interface ResolvedValuationOptions {
@@ -107,9 +130,32 @@ const TYPE_ID_CHUNK = 900;
 
 const STATS_SELECT = `SELECT type_id   AS typeId,
                              best_sell AS bestSell,
-                             p5_sell   AS p5Sell
+                             p5_sell   AS p5Sell,
+                             wavg_sell AS wavgSell,
+                             w5_sell   AS w5Sell
                         FROM market_stats
                        WHERE region_id = ? AND type_id = ?`;
+
+/**
+ * 各口径的回退顺序（P11-1 明确）：
+ * - `p5_sell` / `best_sell`：互回退（保持 P4-1 原有行为不变）
+ * - `wavg_sell` / `w5_sell`：**只回退到 `p5_sell`** —— 不回退到 `best_sell`，
+ *   否则「加权」口径会静默退化成「最低卖价」，两者语义相差过大
+ */
+const BASIS_FALLBACK: Record<ValuationBasis, readonly ValuationBasis[]> = {
+  p5_sell: ['p5_sell', 'best_sell'],
+  best_sell: ['best_sell', 'p5_sell'],
+  wavg_sell: ['wavg_sell', 'p5_sell'],
+  w5_sell: ['w5_sell', 'p5_sell'],
+};
+
+/**
+ * 某口径的回退顺序。导出供其它直接读 `market_stats` 的模块复用（如提醒的 Undercut 参照价），
+ * **避免回退链两处分叉**。
+ */
+export function basisFallbackChain(basis: ValuationBasis): readonly ValuationBasis[] {
+  return BASIS_FALLBACK[basis];
+}
 
 const MISSING: PriceResolution = { price: null, source: 'missing', effectiveBasis: null };
 
@@ -140,10 +186,13 @@ export function filterOutlierPrices(
   return clean.filter((price) => price <= ceiling);
 }
 
-/** 由卖单价格集合取口径价：`p5_sell` = 5% 分位；`best_sell` = 最低价 */
+/** 可由「纯价格序列」表达的口径（加权口径需要挂单量，见 `priceFromSellLevels`） */
+export type PriceOnlyBasis = 'p5_sell' | 'best_sell';
+
+/** 由卖单价格集合取口径价：`p5_sell` = 5% 分位（按订单数插值）；`best_sell` = 最低价 */
 export function priceFromSellPrices(
   prices: readonly number[],
-  basis: ValuationBasis,
+  basis: PriceOnlyBasis,
 ): number | null {
   const clean = positivePrices(prices);
   if (clean.length === 0) return null;
@@ -153,6 +202,24 @@ export function priceFromSellPrices(
     return lowest;
   }
   return percentile(clean, 0.05);
+}
+
+/**
+ * 由卖单**明细**（价 + 剩余量）取口径价，四种口径统一入口（P11-1）。
+ *
+ * 与 `priceFromSellPrices` 的关系：`p5_sell` / `best_sell` 的结果与它**逐位一致**
+ * （前者只是把价格序列重打包成等权明细再走本函数的分支），新增 `wavg_sell` / `w5_sell` 两个加权口径。
+ */
+export function priceFromSellLevels(
+  levels: readonly OrderLevel[],
+  basis: ValuationBasis,
+): number | null {
+  if (basis === 'wavg_sell') return weightedAverage(levels);
+  if (basis === 'w5_sell') return weightedPercentile(levels, 0.05);
+  return priceFromSellPrices(
+    levels.map((level) => level.price),
+    basis,
+  );
 }
 
 function resolveOptions(options: ValuationOptions): ResolvedValuationOptions {
@@ -168,32 +235,68 @@ function resolveOptions(options: ValuationOptions): ResolvedValuationOptions {
   };
 }
 
-/** 由聚合指标行解析：主口径 → 另一口径 → 无报价 */
+/** 由聚合指标行取某口径的原始值（不可用返回 null） */
+function statsValue(row: StatsPriceRow | undefined, basis: ValuationBasis): number | null {
+  if (row === undefined) return null;
+  const value =
+    basis === 'p5_sell'
+      ? row.p5Sell
+      : basis === 'best_sell'
+        ? row.bestSell
+        : basis === 'wavg_sell'
+          ? row.wavgSell
+          : row.w5Sell;
+  return isUsablePrice(value) ? value : null;
+}
+
+/**
+ * 由聚合指标行解析：按 `BASIS_FALLBACK` 顺序取第一个可用值。
+ * 第一个命中 → `source: 'stats'`；后续命中 → `source: 'fallback'` 且 `effectiveBasis` 为实际口径。
+ */
 function resolveFromStats(row: StatsPriceRow | undefined, basis: ValuationBasis): PriceResolution {
-  const primary = basis === 'p5_sell' ? row?.p5Sell : row?.bestSell;
-  const secondary = basis === 'p5_sell' ? row?.bestSell : row?.p5Sell;
-  if (isUsablePrice(primary)) return { price: primary, source: 'stats', effectiveBasis: basis };
-  if (isUsablePrice(secondary)) {
-    const other: ValuationBasis = basis === 'p5_sell' ? 'best_sell' : 'p5_sell';
-    return { price: secondary, source: 'fallback', effectiveBasis: other };
+  const chain = BASIS_FALLBACK[basis];
+  for (let index = 0; index < chain.length; index += 1) {
+    const candidate = chain[index];
+    const value = statsValue(row, candidate);
+    if (value === null) continue;
+    return index === 0
+      ? { price: value, source: 'stats', effectiveBasis: basis }
+      : { price: value, source: 'fallback', effectiveBasis: candidate };
   }
   return MISSING;
 }
 
-/** 由订单簿卖价解析；样本为空（或过滤后为空）返回 null 交由调用方决定回退 */
+/** 由订单簿卖单明细解析；样本为空（或过滤后为空）返回 null 交由调用方决定回退 */
 function resolveFromOrders(
-  prices: readonly number[] | undefined,
+  levels: readonly OrderLevel[] | undefined,
   resolved: ResolvedValuationOptions,
 ): PriceResolution | null {
-  if (prices === undefined) return null;
-  const clean = positivePrices(prices);
+  if (levels === undefined) return null;
+  const clean = levels.filter((level) => isUsablePrice(level.price));
   if (clean.length === 0) return null;
+  // 离群过滤按「价格」判定（与 P4-1 口径一致）：先算出保留的价格集合，再按价筛明细
+  // （同价明细同去同留，故用集合判定与逐条过滤等价）
   const usable = resolved.filterOutliers
-    ? filterOutlierPrices(clean, resolved.outlierMultiple)
+    ? keepLevelsByPrice(
+        filterOutlierPrices(
+          clean.map((level) => level.price),
+          resolved.outlierMultiple,
+        ),
+        clean,
+      )
     : clean;
-  const price = priceFromSellPrices(usable, resolved.basis);
+  const price = priceFromSellLevels(usable, resolved.basis);
   if (!isUsablePrice(price)) return null;
   return { price, source: 'orders', effectiveBasis: resolved.basis };
+}
+
+/** 按「保留的价格集合」筛明细 */
+function keepLevelsByPrice(
+  keptPrices: readonly number[],
+  levels: readonly OrderLevel[],
+): OrderLevel[] {
+  const kept = new Set(keptPrices);
+  return levels.filter((level) => kept.has(level.price));
 }
 
 function chunk<T>(values: readonly T[], size: number): T[][] {
@@ -216,7 +319,9 @@ async function loadStatsByTypes(
     const rows = await db.select<StatsPriceRow>(
       `SELECT type_id   AS typeId,
               best_sell AS bestSell,
-              p5_sell   AS p5Sell
+              p5_sell   AS p5Sell,
+              wavg_sell AS wavgSell,
+              w5_sell   AS w5Sell
          FROM market_stats
         WHERE region_id = ? AND type_id IN (${placeholders})`,
       [regionId, ...part],
@@ -226,31 +331,35 @@ async function loadStatsByTypes(
   return map;
 }
 
-/** 批量读取卖单价格（按 type_id 分组，价格升序） */
-async function loadSellPricesByTypes(
+/** 批量读取卖单明细（价 + 剩余量，按 type_id 分组，价格升序；P11-1 起带 `volume_remain` 以支持加权口径） */
+async function loadSellLevelsByTypes(
   db: DbAdapter,
   typeIds: readonly number[],
   regionId: number,
   stationId: number | null,
-): Promise<Map<number, number[]>> {
-  const map = new Map<number, number[]>();
+): Promise<Map<number, OrderLevel[]>> {
+  const map = new Map<number, OrderLevel[]>();
   for (const part of chunk(typeIds, TYPE_ID_CHUNK)) {
     const placeholders = part.map(() => '?').join(', ');
-    const params: unknown[] = [regionId, ...part];
-    let sql = `SELECT type_id AS typeId, price AS price
-                 FROM market_orders
-                WHERE region_id = ? AND type_id IN (${placeholders}) AND is_buy_order = 0`;
+    // 与 computeMarketStats 同口径：整批大单（min_volume > 1）不代表「1 单位可成交价」，排除
+    const params: unknown[] = [regionId, ...part, MAX_TRADABLE_MIN_VOLUME];
+    // `INDEXED BY idx_market_orders_type`：单类型（或 chunk 只含 1 个 type）时 planner 会误选
+    // `idx_market_orders_side` 而扫全区卖单侧（吉他区实测 ≈1 s）。见 DEV_STATUS「P11-6」
+    let sql = `SELECT type_id AS typeId, price AS price, volume_remain AS volume
+                 FROM market_orders INDEXED BY idx_market_orders_type
+                WHERE region_id = ? AND type_id IN (${placeholders}) AND is_buy_order = 0
+                  AND min_volume <= ?`;
     if (stationId !== null) {
       sql += ' AND location_id = ?';
       params.push(stationId);
     }
     sql += ' ORDER BY type_id, price ASC';
 
-    const rows = await db.select<{ typeId: number; price: number }>(sql, params);
+    const rows = await db.select<{ typeId: number; price: number; volume: number }>(sql, params);
     for (const row of rows) {
       const list = map.get(row.typeId);
-      if (list === undefined) map.set(row.typeId, [row.price]);
-      else list.push(row.price);
+      if (list === undefined) map.set(row.typeId, [{ price: row.price, volume: row.volume }]);
+      else list.push({ price: row.price, volume: row.volume });
     }
   }
   return map;
@@ -267,8 +376,8 @@ async function resolveSingleType(
     return resolveFromStats(rows[0], resolved.basis);
   }
 
-  const orderPrices = await loadSellPricesByTypes(db, [typeId], resolved.regionId, resolved.stationId);
-  const fromOrders = resolveFromOrders(orderPrices.get(typeId), resolved);
+  const levels = await loadSellLevelsByTypes(db, [typeId], resolved.regionId, resolved.stationId);
+  const fromOrders = resolveFromOrders(levels.get(typeId), resolved);
   if (fromOrders !== null) return fromOrders;
 
   // 站点级基准是显式指定，不回退到区域价；区域级精确重算为空则退回聚合快路径
@@ -327,12 +436,12 @@ export async function valueItems(
   const prices = new Map<number, PriceResolution>();
   if (typeIds.length > 0) {
     if (resolved.precise) {
-      const orderPrices = await loadSellPricesByTypes(db, typeIds, resolved.regionId, resolved.stationId);
+      const orderLevels = await loadSellLevelsByTypes(db, typeIds, resolved.regionId, resolved.stationId);
       const stats = resolved.stationId === null
         ? await loadStatsByTypes(db, typeIds, resolved.regionId)
         : null;
       for (const typeId of typeIds) {
-        const fromOrders = resolveFromOrders(orderPrices.get(typeId), resolved);
+        const fromOrders = resolveFromOrders(orderLevels.get(typeId), resolved);
         if (fromOrders !== null) {
           prices.set(typeId, fromOrders);
         } else if (stats !== null) {

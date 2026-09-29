@@ -5,6 +5,7 @@ import {
   DEFAULT_VALUATION_REGION_ID,
   filterOutlierPrices,
   getValuationPrice,
+  priceFromSellLevels,
   priceFromSellPrices,
   valueItems,
   valueQuantity,
@@ -136,6 +137,41 @@ describe('订单簿精确路径（站点级基准）', () => {
     );
 
     expect((await getValuationPrice(db, 104, { stationId: JITA_44 })).price).toBe(10);
+  });
+
+  it('站点级同口径排除整批大单（min_volume > 1）', async () => {
+    const db = await createMigratedDb();
+    await insertSellOrders(db, 105, [10, 20, 30], { firstOrderId: 6000 });
+    await insertSellOrders(db, 105, [1], { firstOrderId: 7000, minVolume: 10_000 });
+
+    const p5 = await getValuationPrice(db, 105, { stationId: JITA_44 });
+    expect(p5.source).toBe('orders');
+    expect(p5.price).toBeCloseTo(11, 10); // [10,20,30] → (3-1)×0.05 = 0.1 → 10 + 10×0.1；未过滤时为 1 + 9×0.15 = 2.35
+
+    const best = await getValuationPrice(db, 105, { stationId: JITA_44, basis: 'best_sell' });
+    expect(best.price).toBe(10); // 未过滤时为 1
+  });
+
+  it('站点级仅剩整批大单时不回退区域价（该站点无 1 单位可成交价）', async () => {
+    const db = await createMigratedDb();
+    await insertStats(db, { typeId: 106, bestSell: 8, p5Sell: 9 });
+    await insertSellOrders(db, 106, [1], { firstOrderId: 8000, minVolume: 5_000 });
+
+    const result = await getValuationPrice(db, 106, { stationId: JITA_44 });
+
+    expect(result.price).toBeNull();
+    expect(result.source).toBe('missing');
+  });
+
+  it('区域级离群过滤路径（同样回订单簿）排除整批大单', async () => {
+    const db = await createMigratedDb();
+    await insertSellOrders(db, 107, [10, 20, 30, 40, 50], { firstOrderId: 9000 });
+    await insertSellOrders(db, 107, [1], { firstOrderId: 9500, minVolume: 10_000 });
+
+    const result = await getValuationPrice(db, 107, { filterOutliers: true });
+
+    expect(result.source).toBe('orders');
+    expect(result.price).toBeCloseTo(12, 10); // [10,20,30,40,50] → (5-1)×0.05 = 0.2 → 10 + 10×0.2；未过滤时为 1 + 9×0.25 = 3.25
   });
 });
 
@@ -279,5 +315,71 @@ describe('批量估值 valueItems', () => {
 
     expect(await valueQuantity(db, 34, 3)).toBe(12);
     expect(await valueQuantity(db, 99, 3)).toBe(0);
+  });
+});
+
+describe('挂单量加权口径（P11-1）', () => {
+  it('聚合快路径：命中 wavg_sell / w5_sell 时取对应列并标记 stats', async () => {
+    const db = await createMigratedDb();
+    await insertStats(db, { typeId: 34, bestSell: 3.6, p5Sell: 3.76, wavgSell: 4.08, w5Sell: 3.9 });
+
+    const wavg = await getValuationPrice(db, 34, { basis: 'wavg_sell' });
+    expect(wavg.price).toBe(4.08);
+    expect(wavg.source).toBe('stats');
+    expect(wavg.effectiveBasis).toBe('wavg_sell');
+
+    const w5 = await getValuationPrice(db, 34, { basis: 'w5_sell' });
+    expect(w5.price).toBe(3.9);
+    expect(w5.source).toBe('stats');
+    expect(w5.effectiveBasis).toBe('w5_sell');
+  });
+
+  it('加权口径缺失时回退到 p5_sell（不跳 best_sell）', async () => {
+    const db = await createMigratedDb();
+    await insertStats(db, { typeId: 34, bestSell: 3.6, p5Sell: 3.76, wavgSell: null });
+
+    const result = await getValuationPrice(db, 34, { basis: 'wavg_sell' });
+
+    expect(result.price).toBe(3.76);
+    expect(result.source).toBe('fallback');
+    expect(result.effectiveBasis).toBe('p5_sell');
+  });
+
+  it('加权口径与 p5_sell 都缺失时判无报价 —— **不回退到 best_sell**', async () => {
+    const db = await createMigratedDb();
+    await insertStats(db, { typeId: 34, bestSell: 3.6, p5Sell: null, wavgSell: null });
+
+    const wavg = await getValuationPrice(db, 34, { basis: 'wavg_sell' });
+    expect(wavg.price).toBeNull();
+    expect(wavg.source).toBe('missing');
+
+    const w5 = await getValuationPrice(db, 34, { basis: 'w5_sell' });
+    expect(w5.price).toBeNull();
+    expect(w5.source).toBe('missing');
+  });
+
+  it('订单簿路径（站点级）也支持加权口径：由该站卖单明细加权', async () => {
+    const db = await createMigratedDb();
+    // 每单默认 volume_remain = 100（insertSellOrders 的 fixture 默认值）
+    await insertSellOrders(db, 34, [10], { firstOrderId: 1 }); // 10 × 100
+    await insertSellOrders(db, 34, [20, 20, 20], { firstOrderId: 2 }); // 20 × 300
+
+    const wavg = await getValuationPrice(db, 34, { stationId: JITA_44, basis: 'wavg_sell' });
+    // (10×100 + 20×300) / 400 = 17.5
+    expect(wavg.price).toBeCloseTo(17.5);
+    expect(wavg.source).toBe('orders');
+    expect(wavg.effectiveBasis).toBe('wavg_sell');
+
+    const w5 = await getValuationPrice(db, 34, { stationId: JITA_44, basis: 'w5_sell' });
+    // 总量 400、阈值 20 单位：第一档累计 100 ≥ 20 → 10
+    expect(w5.price).toBe(10);
+    expect(w5.source).toBe('orders');
+  });
+
+  it('priceFromSellLevels 在 p5_sell / best_sell 上与 priceFromSellPrices 逐位一致', () => {
+    const prices = [10, 20, 30, 40, 50];
+    const levels = prices.map((price) => ({ price, volume: 7 }));
+    expect(priceFromSellLevels(levels, 'p5_sell')).toBe(priceFromSellPrices(prices, 'p5_sell'));
+    expect(priceFromSellLevels(levels, 'best_sell')).toBe(priceFromSellPrices(prices, 'best_sell'));
   });
 });

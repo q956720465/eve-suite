@@ -32,6 +32,8 @@ export const STATS_COLUMNS = [
   'spread',
   'p5_sell',
   'p95_buy',
+  'wavg_sell',
+  'w5_sell',
   'updated_at',
 ] as const;
 
@@ -82,6 +84,8 @@ export function toStatsRow(row: MarketStatsRow): unknown[] {
     row.spread,
     row.p5_sell,
     row.p95_buy,
+    row.wavg_sell,
+    row.w5_sell,
     row.updated_at,
   ];
 }

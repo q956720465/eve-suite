@@ -8,6 +8,7 @@ import { useUpdater } from './about/useUpdater';
 import CalcPage from './calc/CalcPage';
 import { useLpStoreSync } from './lp/useLpStoreSync';
 import MarketPage from './market/MarketPage';
+import MarketBrowsePage from './market/MarketBrowsePage';
 import { useGlobalScanner } from './market/useGlobalScanner';
 import { useMarketCollector } from './market/useMarketCollector';
 import WatchlistPage from './market/WatchlistPage';
@@ -20,11 +21,12 @@ import SdePage from './sde/SdePage';
 import SpreadPage from './market/SpreadPage';
 import { useHistoryInit } from './market/useHistoryInit';
 
-type Tab = 'sde' | 'market' | 'spread' | 'watchlist' | 'assets' | 'calc' | 'notify' | 'about';
+type Tab = 'sde' | 'market' | 'browse' | 'spread' | 'watchlist' | 'assets' | 'calc' | 'notify' | 'about';
 
 const TABS: readonly { id: Tab; label: string }[] = [
   { id: 'sde', label: '数据' },
   { id: 'market', label: '行情' },
+  { id: 'browse', label: '市场' },
   { id: 'spread', label: '价差' },
   { id: 'watchlist', label: '监视' },
   { id: 'assets', label: '资产' },
@@ -147,7 +149,7 @@ export default function App() {
             ))}
           </nav>
         </div>
-        <p className="subtitle">全域行情 · 跨区价差 · 历史全量 · 库存缺口 · 工业对账 · 采矿时薪 · 资产与净值 · 提醒</p>
+        <p className="subtitle">全域行情 · 市场浏览 · 跨区价差 · 历史全量 · 库存缺口 · 工业对账 · 采矿时薪 · 资产与净值 · 提醒</p>
         <p className="meta">
           core 版本：<code>{CORE_VERSION}</code>
         </p>
@@ -161,6 +163,7 @@ export default function App() {
 
       {tab === 'sde' && <SdePage />}
       {tab === 'market' && <MarketPage collector={collector} scanner={globalScanner} />}
+      {tab === 'browse' && <MarketBrowsePage />}
       {tab === 'spread' && <SpreadPage init={historyInit} />}
       {tab === 'watchlist' && <WatchlistPage />}
       {tab === 'assets' && <AssetsPage characters={characters} sync={personalSync} />}

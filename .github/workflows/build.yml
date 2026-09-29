@@ -90,6 +90,14 @@ jobs:
       - name: Run core tests
         run: pnpm --filter @eve-suite/core test
 
+      # Rust 侧 16 个单测（另有 1 个 #[ignore] 真钥匙串自检，需人工交互，不进 CI）。
+      # 先前担心 `tauri::generate_context!` 编译期要求 packages/ui/dist 存在，2026-09-29 实测**不需要**：
+      # 把 dist 移走 + `cargo clean -p eve-suite` 冷编译后，`cargo test` 仍编译通过并 16 passed。
+      # 故本步骤**不依赖前端构建**；若将来 tauri-build 改为强校验，在此前补一步
+      # `pnpm --filter @eve-suite/ui build` 即可。
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
       - name: Build installers
         env:
           # tag 构建需要它来签名（缺 Secret 时为空 → 仅 tag 构建会失败，日常构建不受影响）

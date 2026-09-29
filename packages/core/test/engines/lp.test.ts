@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import { computeBlueprintCost } from '../../src/engines/blueprint';
 import { buildLpPortfolio, computeOfferValue, rankLpOffers } from '../../src/engines/lp';
 import { listLpOffers } from '../../src/lp/repo';
-import { insertStats } from '../engines/fixtures';
+import { insertBlueprint, insertStats } from '../engines/fixtures';
 import { createMigratedDb } from '../helpers/db';
 import { AMARR_NAVY, CEP_FORCE, insertLpBalance, insertLpOffer } from '../lp/fixtures';
 
@@ -199,5 +200,176 @@ describe('buildLpPortfolio', () => {
 
     expect(entry.bestOffer?.offerId).toBe(1);
     expect(entry.totalNetIsk).toBe(0);
+  });
+});
+
+/**
+ * 蓝图类产出估值（P7-4，口径对齐 Fuzzwork）。
+ *
+ * 样本：蓝图 BP_TYPE，主产物 BP_PRODUCT（单次产量 1）；
+ * 制造材料 A 基础量 4（单价 100）、B 基础量 2（单价 1000）；
+ * LP 商场兑换材料 LP_ITEM ×3（单价 500）。
+ *
+ * 默认 runs = offer.quantity(5)、ME 0：
+ *   制造材料成本 = 4×5×100 + 2×5×1000 = 12,000
+ *   产物估值     = 1×5×100,000 = 500,000
+ *   产出估值     = 488,000；净收益 = 488,000 − 1,500 = 486,500 → ISK/LP = 486.5
+ */
+const BP_TYPE = 2000;
+const BP_PRODUCT = 2001;
+const BP_MAT_A = 2002;
+const BP_MAT_B = 2003;
+const LP_ITEM = 2004;
+
+async function setupBlueprintDb() {
+  const db = await createMigratedDb();
+  await insertBlueprint(db, {
+    blueprintTypeId: BP_TYPE,
+    maxProductionLimit: 10,
+    activities: [{ activity: 'manufacturing', timeSeconds: 600 }],
+    io: [
+      { direction: 'input', typeId: BP_MAT_A, quantity: 4 },
+      { direction: 'input', typeId: BP_MAT_B, quantity: 2 },
+      { direction: 'output', typeId: BP_PRODUCT, quantity: 1 },
+    ],
+  });
+  await insertStats(db, { typeId: BP_PRODUCT, p5Sell: 100_000 });
+  await insertStats(db, { typeId: BP_MAT_A, p5Sell: 100 });
+  await insertStats(db, { typeId: BP_MAT_B, p5Sell: 1000 });
+  await insertStats(db, { typeId: LP_ITEM, p5Sell: 500 });
+  await insertLpOffer(db, {
+    offerId: 500,
+    typeId: BP_TYPE,
+    quantity: 5,
+    lpCost: 1000,
+    requiredItems: [{ typeId: LP_ITEM, quantity: 3 }],
+  });
+  return db;
+}
+
+describe('蓝图类产出估值（BPC 再制造）', () => {
+  it('默认 runs = offer.quantity、ME 0：产出估值 = 产物估值 − 制造材料成本', async () => {
+    const db = await setupBlueprintDb();
+    const offers = await listLpOffers(db, CEP_FORCE);
+    const value = await computeOfferValue(db, offers.find((offer) => offer.offerId === 500)!);
+
+    expect(value.outputKind).toBe('blueprint');
+    expect(value.outputValue).toBe(488_000);
+    expect(value.inputCost).toBe(1_500); // LP_ITEM 500 × 3
+    expect(value.netIsk).toBe(486_500);
+    expect(value.iskPerLp).toBe(486.5);
+    expect(value.outputPriced).toBe(true);
+    expect(value.estimation).toEqual({
+      productTypeId: BP_PRODUCT,
+      productQuantityPerRun: 1,
+      runs: 5,
+      me: 0,
+      productValue: 500_000,
+      buildMaterialCost: 12_000,
+      missingTypeIds: [],
+    });
+    expect(value.missingTypeIds).toEqual([]);
+  });
+
+  it('与蓝图成本引擎同口径（交叉验证，防止两处分叉）', async () => {
+    const db = await setupBlueprintDb();
+    const offers = await listLpOffers(db, CEP_FORCE);
+    const value = await computeOfferValue(db, offers.find((offer) => offer.offerId === 500)!);
+
+    const cost = await computeBlueprintCost(db, BP_TYPE, { runs: 5, me: 0 });
+
+    expect(value.estimation?.buildMaterialCost).toBe(cost.materialCost);
+    expect(value.estimation?.productTypeId).toBe(cost.product?.typeId);
+    expect(value.estimation?.productQuantityPerRun).toBe(cost.product?.quantityPerRun);
+    // 折后材料量逐条一致（A 4×5=20、B 2×5=10）
+    expect(cost.materials.map((line) => [line.typeId, line.quantity])).toEqual([
+      [BP_MAT_A, 20],
+      [BP_MAT_B, 10],
+    ]);
+  });
+
+  it('blueprintRuns 覆盖默认流程数', async () => {
+    const db = await setupBlueprintDb();
+    const offers = await listLpOffers(db, CEP_FORCE);
+    const value = await computeOfferValue(db, offers.find((offer) => offer.offerId === 500)!, {
+      blueprintRuns: 10,
+    });
+
+    // 材料 4×10×100 + 2×10×1000 = 24,000；产物 1×10×100,000 = 1,000,000
+    expect(value.estimation?.runs).toBe(10);
+    expect(value.outputValue).toBe(976_000);
+    expect(value.iskPerLp).toBe(974.5); // (976,000 − 1,500) ÷ 1000
+  });
+
+  it('blueprintMe 走蓝图引擎同一折料公式', async () => {
+    const db = await setupBlueprintDb();
+    const offers = await listLpOffers(db, CEP_FORCE);
+    const value = await computeOfferValue(db, offers.find((offer) => offer.offerId === 500)!, {
+      blueprintMe: 10,
+    });
+
+    // A: ceil(5×4×0.9) = 18；B: ceil(5×2×0.9) = 9
+    expect(value.estimation?.me).toBe(10);
+    expect(value.estimation?.buildMaterialCost).toBe(10_800); // 18×100 + 9×1000
+    expect(value.outputValue).toBe(489_200);
+  });
+
+  it('产物无报价 → 不估算（与普通无报价产出同语义）并计入 unpriced', async () => {
+    const db = await createMigratedDb();
+    await insertBlueprint(db, {
+      blueprintTypeId: BP_TYPE,
+      activities: [{ activity: 'manufacturing' }],
+      io: [
+        { direction: 'input', typeId: BP_MAT_A, quantity: 4 },
+        { direction: 'output', typeId: BP_PRODUCT, quantity: 1 },
+      ],
+    });
+    await insertStats(db, { typeId: BP_MAT_A, p5Sell: 100 });
+    await insertLpOffer(db, { offerId: 501, typeId: BP_TYPE, quantity: 5, lpCost: 1000 });
+
+    const ranking = await rankLpOffers(db, CEP_FORCE);
+    const value = ranking.offers[0];
+
+    expect(value.outputPriced).toBe(false);
+    expect(value.estimation).toBeNull();
+    expect(value.outputValue).toBe(0);
+    expect(value.iskPerLp).toBeNull();
+    expect(value.missingTypeIds).toEqual([BP_PRODUCT]);
+    expect(ranking.unpricedOutputOffers).toBe(1);
+  });
+
+  it('制造材料缺价 → 计 0 并同时列入 offer 与估算的 missing 清单', async () => {
+    const db = await setupBlueprintDb();
+    await db.execute('DELETE FROM market_stats WHERE type_id = ?', [BP_MAT_B]);
+    const offers = await listLpOffers(db, CEP_FORCE);
+    const value = await computeOfferValue(db, offers.find((offer) => offer.offerId === 500)!);
+
+    expect(value.estimation?.buildMaterialCost).toBe(2_000); // 只剩材料 A（20×100）
+    expect(value.estimation?.missingTypeIds).toEqual([BP_MAT_B]);
+    expect(value.missingTypeIds).toEqual([BP_MAT_B]);
+    expect(value.outputPriced).toBe(true); // 产物有价 → 仍给估算（偏高，缺价已在 missing 中列出）
+  });
+
+  it('非蓝图 offer 不受影响（回归护栏）：outputKind 为 item、estimation 为 null', async () => {
+    const db = await setupDb();
+    const offers = await listLpOffers(db, CEP_FORCE);
+    const value = await computeOfferValue(db, offers.find((offer) => offer.offerId === 1)!);
+
+    expect(value.outputKind).toBe('item');
+    expect(value.estimation).toBeNull();
+    expect(value.outputValue).toBe(5000);
+    expect(value.iskPerLp).toBe(5);
+  });
+
+  it('蓝图估算值参与同一 ISK/LP 排名（混排）', async () => {
+    const db = await setupBlueprintDb();
+    await insertStats(db, { typeId: OUT_1, p5Sell: 5000 });
+    await insertLpOffer(db, { offerId: 502, typeId: OUT_1, lpCost: 1000 });
+
+    const ranking = await rankLpOffers(db, CEP_FORCE);
+
+    expect(ranking.offers.map((offer) => offer.offerId)).toEqual([500, 502]);
+    expect(ranking.offers.map((offer) => offer.outputKind)).toEqual(['blueprint', 'item']);
+    expect(ranking.unpricedOutputOffers).toBe(0);
   });
 });

@@ -163,8 +163,10 @@ export async function getOrderBook(
                    location_id   AS locationId,
                    issued        AS issued`;
 
+  // `INDEXED BY idx_market_orders_type`：`ORDER BY price … LIMIT` 会让 planner 误选
+  // `idx_market_orders_side`（免排序）而顺序扫全区一侧（吉他有 40 万+ 卖单 → 稀有物品 ≈1 s）。见 DEV_STATUS「P11-6」
   const sells = await db.select<OrderBookEntry>(
-    `SELECT ${columns} FROM market_orders
+    `SELECT ${columns} FROM market_orders INDEXED BY idx_market_orders_type
       WHERE region_id = ? AND type_id = ? AND is_buy_order = 0
       ORDER BY price ASC, order_id ASC
       LIMIT ?`,
@@ -172,7 +174,7 @@ export async function getOrderBook(
   );
 
   const buys = await db.select<OrderBookEntry>(
-    `SELECT ${columns} FROM market_orders
+    `SELECT ${columns} FROM market_orders INDEXED BY idx_market_orders_type
       WHERE region_id = ? AND type_id = ? AND is_buy_order = 1
       ORDER BY price DESC, order_id ASC
       LIMIT ?`,

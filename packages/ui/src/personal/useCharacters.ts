@@ -13,6 +13,7 @@ import {
   OAuthFlowError,
   parseJwtPayload,
   removeCharacter,
+  revokeToken,
   runOAuthFlow,
   TokenManagerError,
   TokenRequestError,
@@ -21,7 +22,7 @@ import {
 } from '@eve-suite/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { initCoreRuntime } from '../core/runtime';
+import { initCoreRuntime, type CoreRuntime } from '../core/runtime';
 
 export interface CharactersHandle {
   characters: CharacterSummary[];
@@ -59,6 +60,54 @@ function describeAuthError(error: unknown): string {
     return '等待授权超时（5 分钟），请重试';
   }
   return `授权失败：${text}`;
+}
+
+/**
+ * 撤销远端刷新令牌的等待上限。
+ * 登出是前台操作，而 `TokenHttp.postForm` 没有 signal 能力（网络黑洞时会一直挂着），
+ * 故用竞速兜住——超时按「远端撤销失败」处理，本地清理照常完成。
+ */
+const REVOKE_TIMEOUT_MS = 10_000;
+
+/** 给 Promise 加超时（到时抛错并清理定时器） */
+function withTimeout<T>(task: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`撤销请求超时（${ms / 1000} 秒）`)), ms);
+    task.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+/**
+ * 撤销远端刷新令牌（best-effort）。
+ *
+ * 返回值：`null` = 已撤销或本无需撤销；字符串 = 失败原因。
+ * 任何失败都**不阻断**本地登出——本地清理是登出的必要部分，远端撤销是尽力而为。
+ * 必须先于删除钥匙串调用（撤销需要令牌明文）。
+ */
+async function revokeRemoteRefreshToken(
+  runtime: CoreRuntime,
+  characterId: number,
+): Promise<string | null> {
+  try {
+    const token = await runtime.tokenStore.loadRefreshToken(characterId);
+    if (token === null || token.length === 0) return null;
+    await withTimeout(
+      revokeToken(runtime.tokenHttp, { clientId: EVE_CLIENT_ID, token }),
+      REVOKE_TIMEOUT_MS,
+    );
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 export function useCharacters(): CharactersHandle {
@@ -142,13 +191,20 @@ export function useCharacters(): CharactersHandle {
       setBusy(true);
       try {
         const runtime = await initCoreRuntime();
-        // 顺序：先删钥匙串条目（失败也不阻断本地清理），再清内存会话与本地数据
+        // 顺序：先取刷新令牌 → 撤销远端（撤销需要明文，必须在删钥匙串之前）→ 删钥匙串
+        // → 清内存会话 → 清本地数据 → 删角色行。
+        // 远端撤销失败不阻断本地清理，只在提示里说明。
+        const revokeError = await revokeRemoteRefreshToken(runtime, characterId);
         await runtime.tokenStore.deleteRefreshToken(characterId).catch(() => undefined);
         runtime.tokenManager.clear(characterId);
         await clearCharacterData(runtime.db, characterId);
         await removeCharacter(runtime.db, characterId);
         await refresh();
-        setMessage('已登出，本地个人数据与刷新令牌均已清除');
+        setMessage(
+          revokeError === null
+            ? '已登出：远端令牌已撤销，本地个人数据与刷新令牌均已清除'
+            : `已登出：本地个人数据与刷新令牌已清除，但远端令牌撤销失败（${revokeError}）`,
+        );
       } catch (error) {
         setMessage(`登出失败：${error instanceof Error ? error.message : String(error)}`);
       } finally {

@@ -5,6 +5,7 @@ import { DEFAULT_VALUATION_REGION_ID } from '../../src/engines/valuation';
 import {
   computeAccountNetWorth,
   computeNetWorth,
+  listSnapshotSeries,
   listSnapshots,
   writeDailySnapshot,
 } from '../../src/personal/networth';
@@ -345,5 +346,57 @@ describe('writeDailySnapshot / listSnapshots', () => {
     const theirs = await listSnapshots(db, otherId);
     expect(mine[0].totalValue).toBe(100);
     expect(theirs[0].totalValue).toBe(999);
+  });
+});
+
+describe('listSnapshotSeries（折线图用升序序列）', () => {
+  /** 自 START_AT 起连写 n 天快照（每天一条、日期递增） */
+  async function writeDays(db: DbAdapter, days: number): Promise<void> {
+    const clock = createFakeClock(START_AT);
+    for (let index = 0; index < days; index += 1) {
+      await writeDailySnapshot(db, CHARACTER_ID, { clock });
+      clock.advance(24 * 60 * 60 * 1000);
+    }
+  }
+
+  it('按日期升序返回，且与 listSnapshots 是同一集合的逆序', async () => {
+    const db = await setup(500);
+    await writeDays(db, 3);
+
+    const series = await listSnapshotSeries(db, CHARACTER_ID);
+    expect(series.map((row) => row.snapshotDate)).toEqual([
+      '2026-09-27',
+      '2026-09-28',
+      '2026-09-29',
+    ]);
+
+    const table = await listSnapshots(db, CHARACTER_ID);
+    expect(series.map((row) => row.snapshotDate)).toEqual(
+      [...table].reverse().map((row) => row.snapshotDate),
+    );
+    // 数值字段原样透传（不因翻转而错位）
+    expect(series[0].totalValue).toBe(table[table.length - 1].totalValue);
+  });
+
+  it('limit 取「最近 N 天」但仍为升序', async () => {
+    const db = await setup(500);
+    await writeDays(db, 4);
+
+    const series = await listSnapshotSeries(db, CHARACTER_ID, 2);
+    expect(series.map((row) => row.snapshotDate)).toEqual(['2026-09-29', '2026-09-30']);
+  });
+
+  it('limit ≤ 0 等价于全部', async () => {
+    const db = await setup(500);
+    await writeDays(db, 3);
+
+    expect(await listSnapshotSeries(db, CHARACTER_ID, 0)).toHaveLength(3);
+    expect(await listSnapshotSeries(db, CHARACTER_ID, -5)).toHaveLength(3);
+  });
+
+  it('无快照时返回空数组', async () => {
+    const db = await setup(500);
+
+    expect(await listSnapshotSeries(db, CHARACTER_ID)).toEqual([]);
   });
 });

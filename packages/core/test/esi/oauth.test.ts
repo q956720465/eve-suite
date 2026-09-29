@@ -10,6 +10,8 @@ import {
   parseJwtPayload,
   parseTokenResponse,
   refreshAccessToken,
+  revokeToken,
+  SSO_REVOKE_ENDPOINT,
   SSO_TOKEN_ENDPOINT,
   type TokenHttp,
 } from '../../src/esi/oauth';
@@ -185,5 +187,49 @@ describe('令牌交换与刷新', () => {
 
   it('非 JSON 响应：抛错', () => {
     expect(() => parseTokenResponse('<html>', 0)).toThrow(/合法 JSON/);
+  });
+});
+
+describe('令牌撤销（RFC 7009）', () => {
+  it('POST 到 revoke 端点，表单含 token / token_type_hint / client_id', async () => {
+    const { http, sent } = createTokenHttp(200, '');
+
+    const outcome = await revokeToken(http, { clientId: 'client-1', token: 'refresh-1' });
+
+    expect(outcome).toBe('revoked');
+    expect(sent).toHaveLength(1);
+    expect(sent[0][0]).toBe(SSO_REVOKE_ENDPOINT);
+    expect(sent[0][1]).toEqual({
+      token: 'refresh-1',
+      token_type_hint: 'refresh_token',
+      client_id: 'client-1',
+    });
+  });
+
+  it('tokenTypeHint 可覆盖（撤销访问令牌）', async () => {
+    const { http, sent } = createTokenHttp(200, '');
+
+    await revokeToken(http, { clientId: 'c', token: 'at-1', tokenTypeHint: 'access_token' });
+
+    expect(sent[0][1].token_type_hint).toBe('access_token');
+  });
+
+  it('2xx + 空响应体（真实 SSO 对未知令牌的实际响应）→ revoked，不抛错', async () => {
+    // 2026-09-29 实测 login.eveonline.com/v2/oauth/revoke：无效令牌返回 200 且响应体为空
+    const { http } = createTokenHttp(200, '');
+
+    await expect(revokeToken(http, { clientId: 'c', token: 'bogus' })).resolves.toBe('revoked');
+  });
+
+  it('非 2xx 且 error=invalid_grant：返回 invalid_grant（不抛错）', async () => {
+    const { http } = createTokenHttp(400, { error: 'invalid_grant' });
+
+    await expect(revokeToken(http, { clientId: 'c', token: 'x' })).resolves.toBe('invalid_grant');
+  });
+
+  it('其它失败：抛带状态码的 TokenRequestError（交由调用方 best-effort 处理）', async () => {
+    const { http } = createTokenHttp(500, { error: 'server_error' });
+
+    await expect(revokeToken(http, { clientId: 'c', token: 'x' })).rejects.toThrow(/HTTP 500/);
   });
 });

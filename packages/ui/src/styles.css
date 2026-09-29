@@ -314,3 +314,179 @@ td.buy {
   font-size: 12px;
   resize: vertical;
 }
+
+/* ---------- P9-1-2 市场浏览 ---------- */
+
+.browse {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 三栏在最小窗口宽度（1024）下会偏紧：整体允许横向滚动，不压缩列宽 */
+.browse-body {
+  overflow-x: auto;
+}
+
+.browse-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr) 340px;
+  gap: 14px;
+  align-items: start;
+  min-width: 980px;
+}
+
+/* 左树 */
+.browse-tree {
+  max-height: 620px;
+  overflow: auto;
+}
+
+.browse-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.browse-tree-row:hover {
+  background: #16202d;
+}
+
+.browse-tree-row.selected {
+  background: #1d3a52;
+  color: #9fe8ff;
+}
+
+.browse-tree-toggle {
+  width: 14px;
+  flex: 0 0 14px;
+  text-align: center;
+  color: #7f8fa3;
+  user-select: none;
+}
+
+.browse-tree-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.browse-tree-count {
+  margin-left: auto;
+  color: #6b7787;
+  font-size: 12px;
+}
+
+/* 中列：列多且窄窗口下会被挤压，故给表格一个下限并允许横向滚动 */
+.browse-table {
+  max-height: 560px;
+  overflow: auto;
+}
+
+.browse-table .result {
+  min-width: 620px;
+}
+
+.result th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.result th.sortable:hover {
+  color: #9fe8ff;
+}
+
+.result th.sortable.active {
+  color: #9fe8ff;
+}
+
+td.dim {
+  color: #8a97a8;
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #7fd6ff;
+  font-size: 13px;
+  text-decoration: underline;
+}
+
+button.link:hover:not(:disabled) {
+  border-color: transparent;
+  color: #a8e4ff;
+}
+
+/* 分页条 */
+.browse-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: #8a97a8;
+}
+
+.browse-pager input {
+  width: 56px;
+  margin: 0 4px;
+  background: #0d131c;
+  border: 1px solid #24313f;
+  border-radius: 6px;
+  color: #d7e3f0;
+  padding: 5px 6px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.browse-pager input:focus {
+  outline: none;
+  border-color: #3f7ea6;
+}
+
+/* 右详情 */
+.browse-detail {
+  max-height: 620px;
+  overflow: auto;
+}
+
+.browse-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 0 2px;
+}
+
+.browse-crumbs button {
+  padding: 2px 7px;
+  font-size: 12px;
+  color: #8a97a8;
+}
+
+.browse-title {
+  margin: 0;
+  font-size: 14px;
+  color: #9fe8ff;
+}
+
+.browse-subtitle {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: #7f8fa3;
+  font-weight: 600;
+}
+
+.browse-detail .counts {
+  grid-template-columns: 1fr;
+}
+
+.browse-detail .result {
+  margin-top: 8px;
+}

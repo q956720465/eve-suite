@@ -310,7 +310,10 @@ export async function searchStations(
   );
 }
 
-/** 转义 LIKE 通配符并包裹 %（用户输入中的 % _ \ 按字面处理） */
-function toLikePattern(value: string): string {
+/**
+ * 转义 LIKE 通配符并包裹 %（用户输入中的 % _ \ 按字面处理）。
+ * 导出以便市场浏览层（`market/browse.ts`）复用同一套转义口径。
+ */
+export function toLikePattern(value: string): string {
   return `%${value.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
 }
