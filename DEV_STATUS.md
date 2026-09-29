@@ -21,6 +21,8 @@
 | **P5-3 库存缺口分析** | ✅ 完成（真机 + 真实库复算逐项一致） | 蓝图 BOM × 全账号资产求差集 → 采购清单 + 总价 + 建议购买枢纽（五枢纽比价；计算页第 5 面板） |
 | **P5-4 精确净值补完** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 合同分项落地 + **跨角色合计净值** + **基准可切（区域/站点/口径/离群）** + 具名缺价明细（资产页） |
 | **P5-5 采矿时薪** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 时薪测算器（速率 × 每 m³ 净精炼产值）+ 采矿账簿复盘（按 **EVE 日** 聚合，日界 = 停机 11:00 UTC）；计算页第 **6** 面板 |
+| **P5-6 工业成本闭环** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 工业任务 × 钱包流水（`industry_job_id`）两段对账：安装费「预算 vs 实际」偏差 + 材料预算→产出估值→**毛利闭环**；计算页第 **7** 面板 |
+| P5-7~ 整合功能 | 未开始 | 提醒系统（托盘 + Webhook）+ Undercut |
 | P6 分发打磨 | 未开始 | 仓库需由私有转公开；macOS 签名 / 公证 |
 
 ## P0 子任务明细
@@ -389,7 +391,8 @@
 | **P5-3 库存缺口分析** | ✅ 完成（真机 + 真实库复算逐项一致） | 新增 `engines/inventory.ts`（`computeInventoryGap` / `getOwnedQuantities`：蓝图 BOM × **全账号**资产求差集 + 五枢纽比价 + 建议购买枢纽 + 理论下限）+ **11** 条用例；UI `ui/src/calc/InventoryPanel.tsx`（计算页第 **5** 面板）；`engines/blueprint.ts` 增导出 `getMaxProductionLimit`（附加，非行为变更） |
 | **P5-4 精确净值补完** | ✅ 完成（真机 + 真实库独立复算逐项一致） | `personal/networth.ts`：**合同分项落地**（P5-4 轻口径）+ 新增 `computeAccountNetWorth`（**跨角色合计** + 分角色明细 + 缺价跨角色去重）；`NetWorthBreakdown` 增 `missingTypeIds`（具名缺价）；`assets.ts` 增 `listAssetLocationIds`；`StationNameEntry` 增 `regionId`（站点候选按区域过滤）；UI 资产页新增**净值口径控件**（区域 / 站点 / 口径 / 离群）+ **全账号合计卡** + 缺价明细展开；新增 **5** 条用例（**390** 全绿） |
 | **P5-5 采矿时薪** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 新增 `engines/mining.ts`（`computeMiningRate` 时薪测算器 + `computeMiningLedger` 账簿复盘 + **EVE 日边界** `eveDayOf` / `previousEveDay` / `EVE_DOWNTIME_UTC_HOUR`，停机 **11:00 UTC** = 北京 19:00）+ **16** 条用例；`sde/repo.ts` 增 `getSystemNames`；UI `ui/src/calc/MiningPanel.tsx`（计算页第 **6** 面板：上时薪测算器 / 下账簿复盘 + 按 EVE 日 / 月 / 矿石 / 星系四张表） |
-| P5-6~ 整合功能 | 未开始 | 工业成本闭环 / 提醒系统（托盘 + Webhook）+ Undercut |
+| **P5-6 工业成本闭环** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 新增 `engines/industry.ts`（`computeIndustryReconciliation`：ESI `activity_id` → SDE 活动映射（1/3/4/5/8/11，未识别返回 null）+ 任务 × 钱包流水（`context_id_type='industry_job_id'`）关联 + **安装费「预算 vs 实际」偏差** + 材料预算（BOM × 假设 ME）→ 产出估值 → **毛利闭环**）+ **16** 条用例；`test/engines/fixtures.ts` 增 `insertIndustryJob` / `insertIndustryJournal`；UI `ui/src/calc/IndustryPanel.tsx`（计算页第 **7** 面板） |
+| P5-7~ 整合功能 | 未开始 | 提醒系统（托盘 + Webhook）+ Undercut |
 
 **P5-1 实测记录（2026-09-28，真实库副本迁移 + 真实 ESI 两轮全量 + 真机界面）**：
 - 静态：core **308 → 331** 用例全绿（新增 global-state 9 + global 13 + 采集器失败水位 2；移除已废弃的「区域级让路」2 条）；`tsc --noEmit`（core / ui）与 `ui build` 通过；Rust **16 + 1 ignored** 不回归（本阶段未动 Rust、未改已发布迁移）
@@ -582,6 +585,37 @@
 - **零 ESI**：全部本地计算，只读 `mining_ledger` + 本地行情
 - **明确不做**：技能 / 建筑加成建模（沿用 P4-4 只覆盖 NPC 站口径）、多矿种混采的实时速率、运输与货舱约束
 
+**P5-6 实测记录（2026-09-29，真实库独立复算 + 真机界面）**：
+- 静态：core **406 → 422** 用例全绿（新增 `test/engines/industry.test.ts` **16** 条：活动映射 / 空输入 / 材料预算 / ME 折减 / 缺价 / 安装费偏差 / 无流水 null / 退款入账 / 毛利 / BPC 无价 / 未完工分流 / 未知活动 / 跨角色不串号 / 按活动汇总）；`tsc --noEmit`（core / ui）与 `ui build` 通过；**未新增迁移、未动 Rust**
+- **真实库现状**：`industry_jobs` **0 行**、`wallet_journal` **3 行**（`player_donation` / `insurance` / `asset_safety_recovery_tax`，均与工业无关）→ 故**注入 3 条合成任务 + 2 条关联流水**完成验收，验完即删
+- **样本**（真实 SDE + 真实行情）：`17477 妄想级蓝图 → 17476 妄想级`（吉他 `p5_sell` 38,996,500）；发明产出 `22545 霍克级蓝图`（**无市场报价**）
+  - ① 已完工·制造 10 runs（安装费预算 5,000,000 / 流水 −3,200,000 −2,000,000 = **实际 5,200,000**）
+  - ② 进行中·制造 5 runs（`active`）
+  - ③ 已完工·发明 4 runs（成功 1；**无关联流水**）
+- **独立复算脚本 `%TEMP%\eve-verify-p56.cjs`（`node eve-verify-p56.cjs <region> <me>`，与引擎同口径独立重算）→ 与真机界面逐项一致**：
+  - 汇总（ME 0）：已完工 **2** 条 / 材料预算 **387,789,915** / 安装费预算 **6,000,000** / 安装费实际 **5,200,000** / **安装费偏差 +200,000** / 产出估值 **389,965,000** / **毛利 3,356,525** / 无关联流水 **1** 条 / 无法算毛利 **1** 条
+  - 制造任务 900000001：7 种材料逐项一致（三钛合金 16,000,000 @3.8 / 类晶体胶矿 3,000,000 @17.225 / 类银超金属 750,000 @51.1955 / 同位聚合体 400,000 @159.9 / 超新星诺克石 150,000 @683.625 / 晶状石英核岩 25,000 @1185.6 / 超噬矿 14,000 @2456.65）→ 材料 **381,408,475**；产出 `10 × 38,996,500 = 389,965,000`；毛利 **3,356,525**
+  - 发明任务 900000003：材料 `32 × 98,020 + 32 × 101,400 = 6,381,440`；产出无价 → **毛利「—」**；无流水 → **偏差「—」**
+  - 未完工任务 900000002：材料预算（估算）**190,704,237.5** / 安装费预算 2,500,000，**不计入汇总**
+- **真机界面**（计算页 → 第 **7** 面板「工业对账」）：汇总行 / 按活动汇总 / 已完工任务表 / 未完工任务表全部与脚本**逐项一致**
+  - **ME 改 10 即时重算**：材料预算 `387,789,915 → **349,050,807.5**`、毛利 `3,356,525 → **41,497,372.5**`（制造 343,267,627.5 / 发明 5,783,180 / 未完工 171,633,813.75），与脚本 ME=10 复算一致；面板文案同步显示「假设 ME 10%」
+  - **清理后复验**：`eve-p56-fixture.cjs cleanup`（`industry_jobs` 3 → **0** 行、`wallet_journal` 5 → **3** 行回到原状）→ 面板显示「该范围内**没有工业任务记录**」空态
+- **真机暴露的方法问题（非产品缺陷）**：本轮**坐标点击对 WebView2 无效**（`click{x,y}` 返回成功但界面不动），改用 `get_app_state(max_depths=40, disableDiff=true)` 取到主进程树内的 WebView 节点后，用 **`click(element_id)`** 成功；滚动也须用 `scroll(element_id=可滚动 group)`（`document` 上的 `scroll_page_down` 无效）
+
+**P5-6 口径（已定，经用户确认）**：
+- **两层对账**（用户批准，取代「单看安装费偏差恒为 0」的空心方案）：
+  1. **安装费层**：预算 = ESI `industry_jobs.cost`；实际 = 钱包流水（`context_id_type='industry_job_id'`）支出 → **偏差 = 实际 − 预算**；**无关联流水时偏差为 null（不臆造）**
+  2. **材料层（成本闭环）**：材料预算（BOM 折后 × 估值单价）→ 与**产出估值**比较得 **毛利 = 产出估值 − 材料预算 − 安装费实际**
+- **材料「实际采购额」不做**：流水里买材料的 `market_transaction` 其 `context_id` 指向**交易 ID**（`context_id_type='market_transaction_id'`），**无法反查 typeId**；备选「时间窗口近似」噪声过大，已被否决
+- **ME 假设**：ESI 的工业任务**不返回 ME / TE** → 材料预算按假设 ME（默认 **0** = 材料成本上限，界面可调 0–10），面板明确标注
+- **完工判定**：`status ∈ {delivered, ready}` 或 `completed_date` 非空；**未完工任务单列且不计入汇总**
+- **产出估值**：`product_type_id × (successful_runs ?? runs)`；BPC 类产物（发明 / 复制）**无市场报价 → 毛利为 null**（不按 0 计）
+- **活动映射**：仅映射有依据的 6 个 id（1 制造 / 3 TE 研究 / 4 ME 研究 / 5 复制 / 8 发明 / **11 反应**，依据 Fuzzwork 的 SDE 转换文档）；**未识别 id 返回 null**，任务照常展示但不做 BOM 预算
+- **关联键**：按 **`(character_id, job_id)` 双键**分组（ESI 的 `job_id` 虽全局唯一，双键杜绝跨角色串号）
+- **零 ESI**：只读本地库（`industry_jobs` + `wallet_journal` + SDE 蓝图表 + 行情）
+- **已知局限（仅声明）**：ESI 钱包流水端点只回溯 **30 天** → 更早的任务查不到关联流水（界面显示「无关联流水」）
+- **明确不做**：安装费的系统成本指数 / 设施税 / SCC 附加费拆分、材料实际采购额、公司工业任务（P3 未同步公司端点）、**LP BPC 产出估值**（用户决定**不并入本阶段**，另立项）
+
 ## 数据库现状
 
 - schema 版本：**v9**（v1 settings + v2 SDE 11 表 + v3 行情 7 表 + v4 个人数据 10 表 + v5 LP 商店 3 表 + v6 类型材料 1 表 + v7 全域扫描状态 1 表 + v8 历史预拉状态 1 表 + **v9 历史 date 索引**）
@@ -607,7 +641,7 @@
 
 ## 下一步
 
-1. **P4 + P5-1 + P5-2 + P5-2.6 + P5-2.7 + P5-2.8 + P5-3 + P5-4 + P5-5 已完成**（四大引擎 + 计算器页 **6** 面板 + 全域 6 小时层 + 跨区价差视图 + 历史预拉与 400 天全量初始化 + 库存缺口分析 + 精确净值补完 + **采矿时薪**）。**下一项 = P5-6：工业成本闭环**（含 LP BPC 产出估值待办）；其后建议：P5-7 提醒系统（托盘 + Webhook）+ Undercut。**开工前先出「任务清单 + 验收清单」交用户确认**。
+1. **P4 + P5-1 + P5-2 + P5-2.6 + P5-2.7 + P5-2.8 + P5-3 + P5-4 + P5-5 + P5-6 已完成**（四大引擎 + 计算器页 **7** 面板 + 全域 6 小时层 + 跨区价差视图 + 历史预拉与 400 天全量初始化 + 库存缺口分析 + 精确净值补完 + 采矿时薪 + **工业成本闭环**）。**下一项 = P5-7：提醒系统（托盘通知 + 通用 Webhook）+ Undercut 提醒**；LP BPC 产出估值待办顺延其后（单独立项）。**开工前先出「任务清单 + 验收清单」交用户确认**。
 2. **待推送**：本地有多个提交未推送（起点 `9130776` 起累积）；推送时机由用户掌控（推送后 CI 才会跑）
 3. 已知待办（非阻塞；凡涉及改动已有代码，均需先出方案并确认）：
    - ~~**P2 行情采集未用共享调度器**~~ **已统一（2026-09-28，P5-1-0）**：`useMarketCollector` 改为取 `initCoreRuntime()` 的共享 db / client / scheduler，枢纽层与全域层共用同一优先级队列、「让路」生效；仍未做的是「全域层与个人数据同步是否再分层限速」
@@ -626,6 +660,7 @@
    - **P5-3 遗留（均未承诺）**：① 「全账号资产」**不含公司资产**（P3 未同步公司端点，需先扩 P3）② 比价只到**枢纽区域**粒度，站点级（吉他 4-4 等）留二期 ③ 仅支持**单蓝图**，多蓝图/多产品合并留二期 ④ 采购总价不含运费/税费/货舱约束 ⑤ 建议购买枢纽排序已按「缺价少者优先」细化（原批准为字面「总价最低」，见 P5-3 口径）
    - **P5-4 遗留（均未承诺）**：① **合同不逐项估值**内物品（需 `/contracts/{id}/items` 端点 + 新表 → 属 P3 同步扩展，另立项）② **公司资产/钱包/合同**未纳入（同上）③ 净值**趋势折线图**未做（快照列表已有）④ 站点级基准**同区域多站**需用户自行选对（如吉他 `60003760`=4-4 海军组装车间 vs `60003466`=商业法庭，结果差异很大）
    - **P5-5 遗留（均未承诺）**：① 真实库 `mining_ledger` **长期 0 行** —— 真机验收靠**注入合成数据**完成，真实账簿需先在游戏内挖矿并由 P3 同步（`esi-characters.read_mining_ledger.v1`）② 速率**由用户手填**，未做「按船/装备自动推导」③ 精炼产出率沿用 P4-4 **NPC 站口径**，不含玩家建筑 rig 与建筑税 ④ 账簿「按星系」收益为**体积分摊**（合计严格相等），非逐星系独立精炼 ⑤ 未与「提醒系统 / 工业成本闭环」联动
+   - **P5-6 遗留（均未承诺）**：① 真实库 `industry_jobs` **长期 0 行** —— 真机验收靠**注入合成数据**完成；真实数据需先在游戏内开工并由 P3 同步 ② **ME / TE 不可知**（ESI 不返回）→ 材料预算只能按**假设 ME** 计算 ③ **材料实际采购额无法关联**（流水的 `market_transaction` 只到交易 ID）④ 安装费只到总额，**不拆分**系统成本指数 / 设施税 / SCC 附加费 ⑤ **公司工业任务**未纳入（P3 未同步公司端点）⑥ 钱包流水端点只回溯 **30 天** → 更早任务无关联流水 ⑦ **LP BPC 产出估值**未做（用户决定另立项）
 
 ## 踩坑备忘（重要，勿重蹈）
 
@@ -654,10 +689,11 @@
      - 因此**多数验收不必再留给人工**；仅当控件无 ValuePattern/无 expand-list-item 结构（或需要真实键盘输入法行为）时才回退人工。
      - 另：**Vite HMR 会保留组件 state**（改代码后面板不会自动回到默认值），需 `Ctrl+R` 重载 WebView 才能复位（本次用它把面板恢复默认）。
      - 定位仍以**主进程 id + 同观察标签核对**为准（撞号风险不变）；`set_value` 前建议先做一次全量观察拿 id。
-   - **补充 5（P5-5-5 实测，2026-09-29）**：两点工具细节，避免重复试错——
+   - **补充 5（P5-5-5 / P5-6-5 实测，2026-09-29）**：三条工具细节，避免重复试错——
      - **树形态在同一次会话内会变**：`get_app_state(pid)` 有时返回「主进程树带完整 WebView 内容」，有时返回「主进程树只剩无名容器 + 内容在 `<foreign_child_window>`（`msedgewebview2.exe`）」→ **两棵树的 element_id 不可互推**，每次动作前按当前观察核对标签。
-     - **坐标点击也必须传 `element_id`**：`click` 用 `x`/`y` 时需同时传窗口根 `element_id: "0"`，否则报 `element_id: Invalid input: expected string, received undefined`。
-     - **`set_value` 是填文本的首选**：本轮往「采矿速率」输入 `2000` 一次成功（React 受控组件收到变更并重算）；`type_text` 传含全角括号的正则脚本会 `SyntaxError`，慎用。
+     - **`max_depths` 太小会截断 WebView 内容**：用 `max_depths: 8~10` 时主进程树里只剩无名容器（拿不到按钮 id）；改 **`max_depths: 40` + `disableDiff: true`** 就能取到主进程树内的完整 WebView 节点（`button / edit / combo-box`），随后 `click(element_id)` 生效（与「补充 4」一致）。
+     - **坐标点击对 WebView2 无效（重要修正）**：`click{x,y}` 需同时传窗口根 `element_id: "0"`（否则报 `element_id: Invalid input: expected string`），但 P5-6-5 实测**返回成功、界面却不动**（P5-5-5 曾偶然可用）→ **优先 element_id 点击**，坐标仅作兜底。**滚动**同理：`scroll(element_id=可滚动 group, direction, pages)` 有效，而对 `document` 发 `perform_action scroll_page_down` **无效果**。
+     - **`set_value` 是填文本的首选**：P5-5 往「采矿速率」、P5-6 往「材料效率假设」填值均一次成功（React 受控组件收到变更并重算）；`type_text` 传含全角括号的正则脚本会 `SyntaxError`，慎用。
 11. **dev 启动失败先查端口 1420**：上一次未完全退出的 vite 会占用端口（`Stop-Process` 按占用进程清理）。
 12. **【易静默失效】`keyring` 每个平台必须「恰好启用一个」后端**：只有在「该平台适用的后端恰好一个」时才会启用它；启用多个（或零个）会**静默回落 mock 存储**（内存态、跨进程不持久）→ 症状是「测试全绿，但重启应用后令牌凭空消失」。
    - 核验手段：`cargo tree -p keyring --depth 1` 应只出现该平台的后端依赖（Windows = `windows-sys`/`byteorder`/`zeroize`）；若同时出现 `dbus-secret-service`、`linux-keyutils`，说明配置有问题。
@@ -795,6 +831,7 @@
 | **蓝图成本引擎（P4-2）** | `packages/core/src/engines/blueprint.ts`（BOM / ME-TE 折扣 / 成本编排） |
 | **库存缺口引擎（P5-3）** | `packages/core/src/engines/inventory.ts`（`computeInventoryGap`：BOM × 全账号资产差集 + 五枢纽比价 + 建议购买枢纽 + 理论下限；`getOwnedQuantities` 跨角色聚合）；UI `packages/ui/src/calc/InventoryPanel.tsx`（计算页第 5 面板，挂在 `CalcPage.tsx`） |
 | **采矿时薪引擎（P5-5）** | `packages/core/src/engines/mining.ts`（`computeMiningRate` 时薪测算器 / `computeMiningLedger` 账簿复盘（日·月·矿石·星系）/ **EVE 日边界** `eveDayOf`·`previousEveDay`·`EVE_DOWNTIME_UTC_HOUR=11` / 原矿直卖兜底）；`sde/repo.ts` 的 `getSystemNames`；UI `packages/ui/src/calc/MiningPanel.tsx`（计算页第 6 面板） |
+| **工业成本闭环引擎（P5-6）** | `packages/core/src/engines/industry.ts`（`computeIndustryReconciliation`：`INDUSTRY_ACTIVITY_IDS` / `resolveIndustryActivity`（ESI `activity_id` → SDE 活动，未识别返回 null）+ 任务 × 钱包流水（`context_id_type='industry_job_id'`）关联 + 安装费偏差 + 材料预算 → 产出估值 → 毛利）；UI `packages/ui/src/calc/IndustryPanel.tsx`（计算页第 7 面板） |
 | **LP 比价引擎（P4-3）** | `packages/core/src/engines/lp.ts`（ISK/LP 排名 / LP 组合） |
 | **LP 商店同步与仓储（P4-3）** | `packages/core/src/lp/sync.ts`、`lp/repo.ts`（ESI 公共端点 + ETag/TTL + 整团替换） |
 | **矿石精炼值引擎（P4-4）** | `packages/core/src/engines/refining.ts`（整份精炼 / 产出率 / 税 / 单位产值） |
@@ -805,7 +842,7 @@
 | 个人数据调度（P3-6） | `packages/core/src/personal/scheduler.ts`、`personal/repo.ts`；缓存解析在 `esi/client.ts` 的 `parseCacheControl` |
 | UI：资产页 / 授权 / 同步 Hook | `packages/ui/src/personal/`（AssetsPage.tsx、useCharacters.ts、usePersonalSync.ts） |
 | UI：core 运行时单例（共享调度器 + 令牌） | `packages/ui/src/core/runtime.ts` |
-| **UI：计算器页（P4-5 + P5+）** | `packages/ui/src/calc/`（CalcPage.tsx **六**子页签：蓝图成本 / 库存缺口 / LP 比价 / 矿石精炼值 / **采矿时薪** / 算例对照；RefinePanel.tsx；BlueprintPanel.tsx；LpPanel.tsx；InventoryPanel.tsx；**MiningPanel.tsx**；CalcCasePanel.tsx） |
+| **UI：计算器页（P4-5 + P5+）** | `packages/ui/src/calc/`（CalcPage.tsx **七**子页签：蓝图成本 / 库存缺口 / LP 比价 / 矿石精炼值 / 采矿时薪 / **工业对账** / 算例对照；RefinePanel.tsx；BlueprintPanel.tsx；LpPanel.tsx；InventoryPanel.tsx；MiningPanel.tsx；**IndustryPanel.tsx**；CalcCasePanel.tsx） |
 | **UI：全域层调度与面板（P5-1）** | `packages/ui/src/market/useGlobalScanner.ts`（App 级：60s 到期检查 / 单飞 / 随暂停停 / 档位读写）+ `packages/ui/src/market/GlobalScanPanel.tsx`（行情页「全域层 · 跨区快照」区块） |
 | **App 级 LP 报价同步（P4-5-3）** | `packages/ui/src/lp/useLpStoreSync.ts`（`LpStoreSyncer` + 启动/角色变化/个人同步后补跑 + `refresh()` force） |
 | **写操作瞬时锁重试（DB-1）** | `packages/core/src/db/retry.ts`（`isTransientLockError` / `retryOnBusy`）；接线在 `db/tauri.ts` |
@@ -1119,4 +1156,29 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 - 应用**已停止**；真实库 **schema v9**、1 个角色（`WEEK 813`）、`mining_ledger` **0 行**（合成数据已清理）
 - 核验脚本：`%TEMP%\eve-verify-p55.cjs`（测算器，`--ledger` 加账簿）、`%TEMP%\eve-p55-ledger-fixture.cjs`（`insert` / `cleanup` 合成账簿数据）
 - **过程教训**：`computer-use` 的 `type_text` 传 JS 脚本时，正则字面量里含全角括号 `（m³/小时）` 会触发 `SyntaxError: Invalid regular expression flags` → 改用 `set_value` 直接写入输入框（React 受控组件正常响应）
+
+## 会话纪要（2026-09-29 · P5-6 工业成本闭环）
+
+> 同上：仅供追溯，权威事实以「## P5 进度」为准。
+
+**该会话完成事项**
+
+| # | 事项 | 结果 | 提交 |
+|---|---|---|---|
+| 1 | 读方案 §6.2「工业成本闭环」+ 核对 `industry_jobs` / `wallet_journal` 表结构 + 验证 ESI `context_id_type='industry_job_id'` → 出「任务清单 + 验收清单」+ 7 个待定口径（含 6 条解决建议） | 通过（用户「按建议执行」） | — |
+| 2 | **P5-6-1** `engines/industry.ts`：活动映射（1/3/4/5/8/11）+ `computeIndustryReconciliation`（安装费两层对账 + 材料预算 → 产出 → 毛利 + 未完工分流） | 通过 | 见下 |
+| 3 | **P5-6-2** `industry.test.ts` **16** 条 + `fixtures.ts` 增 2 个夹具；core **406 → 422** 全绿 | 通过 | 见下 |
+| 4 | **P5-6-3** `IndustryPanel.tsx`（汇总行 / 按活动汇总 / 已完工任务表 / 未完工任务表 / 缺价清单 / 空态）+ CalcPage 第 7 页签 | 通过 | 见下 |
+| 5 | **P5-6-4** 静态校验（core 单测 + `tsc` core/ui + `ui build`） | 通过 | 见下 |
+| 6 | **P5-6-5** 真实库注入 3 条合成任务 + 2 条流水 → `eve-verify-p56.cjs` 独立复算与真机界面**逐项一致**（ME 0 / ME 10 两组）；清理后空态复验 | 通过 | 见下 |
+| 7 | **P5-6-6** DEV_STATUS 更新 + 本地提交 | 通过 | 见下 |
+
+**关键验收证据**：见「## P5 进度」的「P5-6 实测记录 / 口径」。要点：汇总 **材料预算 387,789,915 / 安装费偏差 +200,000 / 产出估值 389,965,000 / 毛利 3,356,525**；ME 改 10 后 **材料 349,050,807.5 / 毛利 41,497,372.5** —— 均与独立复算逐项一致。
+
+**该会话结束时的仓库 / 环境状态**
+
+- 工作区改动：`packages/core/src/engines/{industry.ts,index.ts}`、`packages/core/test/engines/{industry.test.ts,fixtures.ts}`、`packages/ui/src/calc/{IndustryPanel.tsx,CalcPage.tsx}`、`DEV_STATUS.md`；**未新增迁移、未动 Rust**
+- 应用**已停止**；真实库 **schema v9**、1 个角色（`WEEK 813`）、`industry_jobs` **0 行**（合成数据已清理）、`wallet_journal` **3 行**（原状）
+- 核验脚本：`%TEMP%\eve-verify-p56.cjs`（`node eve-verify-p56.cjs <regionId> <me>`）、`%TEMP%\eve-p56-fixture.cjs`（`insert` / `cleanup` 合成任务与流水）、`%TEMP%\eve-p56-probe.cjs` / `probe2.cjs`（表结构与样本蓝图探测）
+- **过程教训**：本轮坐标点击对 WebView2 无效，改用 `max_depths=40` 全量树 + `element_id` 点击（已写入踩坑 #10 补充 5）
 
