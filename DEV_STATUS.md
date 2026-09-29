@@ -20,7 +20,7 @@
 | **P5-2 跨区价差 / 历史预拉 / 全量初始化** | ✅ 完成（真机 + 真实 ESI 验收） | 跨区价差视图（P5-2）+ 枢纽历史预拉（P5-2.6，写入优化 P5-2.7）+ **历史数据全量初始化 400 天（P5-2.8，8 路并发 / 独占 / 续跑）** |
 | **P5-3 库存缺口分析** | ✅ 完成（真机 + 真实库复算逐项一致） | 蓝图 BOM × 全账号资产求差集 → 采购清单 + 总价 + 建议购买枢纽（五枢纽比价；计算页第 5 面板） |
 | **P5-4 精确净值补完** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 合同分项落地 + **跨角色合计净值** + **基准可切（区域/站点/口径/离群）** + 具名缺价明细（资产页） |
-| P5-5~ 整合功能 | 未开始 | 采矿时薪 / 工业成本闭环 / 提醒系统（托盘 + Webhook）+ Undercut |
+| **P5-5 采矿时薪** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 时薪测算器（速率 × 每 m³ 净精炼产值）+ 采矿账簿复盘（按 **EVE 日** 聚合，日界 = 停机 11:00 UTC）；计算页第 **6** 面板 |
 | P6 分发打磨 | 未开始 | 仓库需由私有转公开；macOS 签名 / 公证 |
 
 ## P0 子任务明细
@@ -388,7 +388,8 @@
 | **P5-2.8 历史数据全量初始化** | ✅ 完成（真机 + 真实 ESI 完整一轮 + 修复复跑验收） | 迁移 **0009**（`market_history_daily(date)` 索引）；保留期 **90 → 400 天**；新增 `market/history-init.ts`（`HistoryInitializer`：8 路并发拉 + 单写者合批串行写 + 本轮锚点续跑 + 失败隔离 + 取消）；**删除** `HistoryBackfill` 类（取消日常 24h 轮次）；UI 新面板 `HistoryInitPanel.tsx` + `useHistoryInit.ts`（确认弹窗 / 进度 / 取消 / 独占编排 / 启动裁剪 / WAL checkpoint / VACUUM）；`RequestScheduler.applyLimits`；新增 **12** 条用例（**374** 全绿）；真机修复 **4** 处：ETag 304 阻断补满 / 续跑耗时含空闲间隔 / VACUUM 后 WAL 未截断 / **404+400「无可用历史」误判为失败** |
 | **P5-3 库存缺口分析** | ✅ 完成（真机 + 真实库复算逐项一致） | 新增 `engines/inventory.ts`（`computeInventoryGap` / `getOwnedQuantities`：蓝图 BOM × **全账号**资产求差集 + 五枢纽比价 + 建议购买枢纽 + 理论下限）+ **11** 条用例；UI `ui/src/calc/InventoryPanel.tsx`（计算页第 **5** 面板）；`engines/blueprint.ts` 增导出 `getMaxProductionLimit`（附加，非行为变更） |
 | **P5-4 精确净值补完** | ✅ 完成（真机 + 真实库独立复算逐项一致） | `personal/networth.ts`：**合同分项落地**（P5-4 轻口径）+ 新增 `computeAccountNetWorth`（**跨角色合计** + 分角色明细 + 缺价跨角色去重）；`NetWorthBreakdown` 增 `missingTypeIds`（具名缺价）；`assets.ts` 增 `listAssetLocationIds`；`StationNameEntry` 增 `regionId`（站点候选按区域过滤）；UI 资产页新增**净值口径控件**（区域 / 站点 / 口径 / 离群）+ **全账号合计卡** + 缺价明细展开；新增 **5** 条用例（**390** 全绿） |
-| P5-5~ 整合功能 | 未开始 | 采矿时薪 / 工业成本闭环 / 提醒系统（托盘 + Webhook）+ Undercut |
+| **P5-5 采矿时薪** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 新增 `engines/mining.ts`（`computeMiningRate` 时薪测算器 + `computeMiningLedger` 账簿复盘 + **EVE 日边界** `eveDayOf` / `previousEveDay` / `EVE_DOWNTIME_UTC_HOUR`，停机 **11:00 UTC** = 北京 19:00）+ **16** 条用例；`sde/repo.ts` 增 `getSystemNames`；UI `ui/src/calc/MiningPanel.tsx`（计算页第 **6** 面板：上时薪测算器 / 下账簿复盘 + 按 EVE 日 / 月 / 矿石 / 星系四张表） |
+| P5-6~ 整合功能 | 未开始 | 工业成本闭环 / 提醒系统（托盘 + Webhook）+ Undercut |
 
 **P5-1 实测记录（2026-09-28，真实库副本迁移 + 真实 ESI 两轮全量 + 真机界面）**：
 - 静态：core **308 → 331** 用例全绿（新增 global-state 9 + global 13 + 采集器失败水位 2；移除已废弃的「区域级让路」2 条）；`tsc --noEmit`（core / ui）与 `ui build` 通过；Rust **16 + 1 ignored** 不回归（本阶段未动 Rust、未改已发布迁移）
@@ -557,7 +558,30 @@
 - **缺价不兜底**：按 0 计 + 具名列出（`NetWorthBreakdown.missingTypeIds`）
 - **零 ESI**：净值计算只读本地库
 - **明确不做**：合同内物品逐项估值、公司资产/钱包/合同、净值趋势折线图（快照列表已有）
- 
+
+**P5-5 实测记录（2026-09-29，真实库独立复算 + 真机界面）**：
+- 静态：core **390 → 406** 用例全绿（新增 `test/engines/mining.test.ts` **16** 条 = 测算器 5 + EVE 日边界 3 + 账簿复盘 8）；`tsc --noEmit`（core / ui）与 `ui build` 通过；**未新增迁移、未动 Rust**
+- **独立复算脚本 `%TEMP%\eve-verify-p55.cjs`**（测算器 + 可选 `--ledger`，与引擎同口径独立重算）
+  - **时薪测算器**：凡晶石（`typeID 1230`，100 单位/份）/ 速率 **2000 m³/h** / 产出率 50% / 税 0 / 基准 The Forge → **151,120 ISK/h**（每 m³ 净产值 75.56 / 每单位 7.56 / 每小时采矿量 20,000 单位 / 原矿直卖 2,590 = 12.95/单位 / 精炼更优 ×58.35）
+  - **账簿复盘**：真实库 `mining_ledger` 原本 **0 行**，故**注入 3 行合成数据**（凡晶石，跨 2 个 EVE 日 + 1 行进行中日）后复算 → 净收益 **8,975,270** / 原矿直卖 **15,038,000** / 总量 **1,000,000 单位** / 体积 **115,000 m³** / 有效 **2 天** / 总时长 **57.5 小时** / 时薪 **156,091.65**
+- **真机界面**（计算页 → 第 **6** 面板「采矿时薪」）：
+  1. 面板渲染正确；**未填速率时**「每小时收益」显示「**—（需填速率）**」而非 0✅（本条为**真机暴露并修复的缺陷**：初版 `rate.iskPerHour` 在 `cubicMetersPerHour` 未填时返回 0，界面误显示 `0`；已改为按 `cubicMetersPerHour === null` 优先显示占位文案，同理「每小时采矿量 / 原矿直卖」两列）
+  2. `set_value` 往速率框写入 **2000** → React 受控组件收到变更并重算：**每小时收益 151,120** / 每小时采矿量 20,000 单位 / 原矿直卖 2,590（12.95/单位）→ 与脚本**逐项一致**✅
+  3. 账簿复盘汇总行：净收益 8,975,270 / 原矿直卖 15,038,000 / 1,000,000 单位 / 115,000 m³ / 2 天 / **57.5 小时** / **时薪 156,091.65** → 与脚本**逐项一致**✅
+  4. 「按 EVE 日」表出现注入日行（2026-09-05：800,000 单位 / 95,000 m³ / 47.5 h / 收益 7,464,070 / 时薪 157,138.32）
+  5. 日界提示：「已结束的最新 EVE 日：**2026-09-27**（当前进行中：2026-09-28）」→ EVE 日边界（停机 11:00 UTC）生效✅
+  6. **清理后复验**：执行 `eve-p55-ledger-fixture.cjs cleanup`（删除 3 行合成数据，剩余 0 行）→ 切走再切回该页，账簿显示「该范围内**没有已结束的 EVE 日采矿记录**」、速率框复位为「—（需填速率）」→ 空态与清理均正确✅
+
+**P5-5 口径（已定，经用户确认）**：
+- **时薪 = 采矿速率(m³/h) × 每 m³ 净精炼产值**；速率由用户填写（**不替用户猜船与装备**），未填时只展示每单位 / 每 m³ 净产值
+- **每 m³ 净产值** 复用 P4-4 `refineOre` 口径（整份取整、税按产值扣减、估值走 `getValuationPrice` 唯一出口）；**无精炼映射的矿石**（冰 / 月矿等）→ **原矿直卖兜底**并标注 `basis='raw'` / `unmappedTypeIds`；**体积缺失** → `null`（**不静默为 0**）
+- **EVE 日边界**：日界 = **每日停机 11:00 UTC**（北京 19:00）→ `eveDayOf(now) = (now − 11h)` 的 UTC 日期；**未结束的当天不计入统计**（`excludeUnfinishedDay` 默认 true，进行中日单列 `unfinishedDay`）
+- **账簿聚合顺序**：按 **(date, typeId) 汇总后**再 `refineOre`（整份只取整一次，避免逐行取整偏差）
+- **时薪（账簿）**：时长 = Σ体积 ÷ 速率；速率未填则时长 / 时薪为 `null`
+- **星系分摊**：按各星系体积占比分摊总收益（合计严格等于总收益）；以「体积分摊」而非独立精炼，因星系比「日期+矿石」更细、无法复用整份取整结果
+- **零 ESI**：全部本地计算，只读 `mining_ledger` + 本地行情
+- **明确不做**：技能 / 建筑加成建模（沿用 P4-4 只覆盖 NPC 站口径）、多矿种混采的实时速率、运输与货舱约束
+
 ## 数据库现状
 
 - schema 版本：**v9**（v1 settings + v2 SDE 11 表 + v3 行情 7 表 + v4 个人数据 10 表 + v5 LP 商店 3 表 + v6 类型材料 1 表 + v7 全域扫描状态 1 表 + v8 历史预拉状态 1 表 + **v9 历史 date 索引**）
@@ -583,7 +607,7 @@
 
 ## 下一步
 
-1. **P4 + P5-1 + P5-2 + P5-2.6 + P5-2.7 + P5-2.8 + P5-3 + P5-4 已完成**（四大引擎 + 计算器页 4 面板 + 全域 6 小时层 + 跨区价差视图 + 历史预拉与 400 天全量初始化 + 库存缺口分析 + **精确净值补完**）。**下一项 = P5-5：采矿时薪**；其后依次建议：P5-6 工业成本闭环（含 LP BPC 产出估值待办）→ P5-7 提醒系统（托盘 + Webhook）+ Undercut。**开工前先出「任务清单 + 验收清单」交用户确认**。
+1. **P4 + P5-1 + P5-2 + P5-2.6 + P5-2.7 + P5-2.8 + P5-3 + P5-4 + P5-5 已完成**（四大引擎 + 计算器页 **6** 面板 + 全域 6 小时层 + 跨区价差视图 + 历史预拉与 400 天全量初始化 + 库存缺口分析 + 精确净值补完 + **采矿时薪**）。**下一项 = P5-6：工业成本闭环**（含 LP BPC 产出估值待办）；其后建议：P5-7 提醒系统（托盘 + Webhook）+ Undercut。**开工前先出「任务清单 + 验收清单」交用户确认**。
 2. **待推送**：本地有多个提交未推送（起点 `9130776` 起累积）；推送时机由用户掌控（推送后 CI 才会跑）
 3. 已知待办（非阻塞；凡涉及改动已有代码，均需先出方案并确认）：
    - ~~**P2 行情采集未用共享调度器**~~ **已统一（2026-09-28，P5-1-0）**：`useMarketCollector` 改为取 `initCoreRuntime()` 的共享 db / client / scheduler，枢纽层与全域层共用同一优先级队列、「让路」生效；仍未做的是「全域层与个人数据同步是否再分层限速」
@@ -601,6 +625,7 @@
    - **P5-2.7 遗留**：① 跨天的真机增量验证未做（当日已拉过的 pair 会跳过，需隔日复测）② 库内已累积大量空闲页，如需回收物理空间可择机执行 `VACUUM`（会短暂持写锁，建议在采集空闲时做）
    - **P5-3 遗留（均未承诺）**：① 「全账号资产」**不含公司资产**（P3 未同步公司端点，需先扩 P3）② 比价只到**枢纽区域**粒度，站点级（吉他 4-4 等）留二期 ③ 仅支持**单蓝图**，多蓝图/多产品合并留二期 ④ 采购总价不含运费/税费/货舱约束 ⑤ 建议购买枢纽排序已按「缺价少者优先」细化（原批准为字面「总价最低」，见 P5-3 口径）
    - **P5-4 遗留（均未承诺）**：① **合同不逐项估值**内物品（需 `/contracts/{id}/items` 端点 + 新表 → 属 P3 同步扩展，另立项）② **公司资产/钱包/合同**未纳入（同上）③ 净值**趋势折线图**未做（快照列表已有）④ 站点级基准**同区域多站**需用户自行选对（如吉他 `60003760`=4-4 海军组装车间 vs `60003466`=商业法庭，结果差异很大）
+   - **P5-5 遗留（均未承诺）**：① 真实库 `mining_ledger` **长期 0 行** —— 真机验收靠**注入合成数据**完成，真实账簿需先在游戏内挖矿并由 P3 同步（`esi-characters.read_mining_ledger.v1`）② 速率**由用户手填**，未做「按船/装备自动推导」③ 精炼产出率沿用 P4-4 **NPC 站口径**，不含玩家建筑 rig 与建筑税 ④ 账簿「按星系」收益为**体积分摊**（合计严格相等），非逐星系独立精炼 ⑤ 未与「提醒系统 / 工业成本闭环」联动
 
 ## 踩坑备忘（重要，勿重蹈）
 
@@ -629,6 +654,10 @@
      - 因此**多数验收不必再留给人工**；仅当控件无 ValuePattern/无 expand-list-item 结构（或需要真实键盘输入法行为）时才回退人工。
      - 另：**Vite HMR 会保留组件 state**（改代码后面板不会自动回到默认值），需 `Ctrl+R` 重载 WebView 才能复位（本次用它把面板恢复默认）。
      - 定位仍以**主进程 id + 同观察标签核对**为准（撞号风险不变）；`set_value` 前建议先做一次全量观察拿 id。
+   - **补充 5（P5-5-5 实测，2026-09-29）**：两点工具细节，避免重复试错——
+     - **树形态在同一次会话内会变**：`get_app_state(pid)` 有时返回「主进程树带完整 WebView 内容」，有时返回「主进程树只剩无名容器 + 内容在 `<foreign_child_window>`（`msedgewebview2.exe`）」→ **两棵树的 element_id 不可互推**，每次动作前按当前观察核对标签。
+     - **坐标点击也必须传 `element_id`**：`click` 用 `x`/`y` 时需同时传窗口根 `element_id: "0"`，否则报 `element_id: Invalid input: expected string, received undefined`。
+     - **`set_value` 是填文本的首选**：本轮往「采矿速率」输入 `2000` 一次成功（React 受控组件收到变更并重算）；`type_text` 传含全角括号的正则脚本会 `SyntaxError`，慎用。
 11. **dev 启动失败先查端口 1420**：上一次未完全退出的 vite 会占用端口（`Stop-Process` 按占用进程清理）。
 12. **【易静默失效】`keyring` 每个平台必须「恰好启用一个」后端**：只有在「该平台适用的后端恰好一个」时才会启用它；启用多个（或零个）会**静默回落 mock 存储**（内存态、跨进程不持久）→ 症状是「测试全绿，但重启应用后令牌凭空消失」。
    - 核验手段：`cargo tree -p keyring --depth 1` 应只出现该平台的后端依赖（Windows = `windows-sys`/`byteorder`/`zeroize`）；若同时出现 `dbus-secret-service`、`linux-keyutils`，说明配置有问题。
@@ -765,6 +794,7 @@
 | **估值引擎（P4-1 唯一定价出口）** | `packages/core/src/engines/valuation.ts`（出口 `engines/index.ts`） |
 | **蓝图成本引擎（P4-2）** | `packages/core/src/engines/blueprint.ts`（BOM / ME-TE 折扣 / 成本编排） |
 | **库存缺口引擎（P5-3）** | `packages/core/src/engines/inventory.ts`（`computeInventoryGap`：BOM × 全账号资产差集 + 五枢纽比价 + 建议购买枢纽 + 理论下限；`getOwnedQuantities` 跨角色聚合）；UI `packages/ui/src/calc/InventoryPanel.tsx`（计算页第 5 面板，挂在 `CalcPage.tsx`） |
+| **采矿时薪引擎（P5-5）** | `packages/core/src/engines/mining.ts`（`computeMiningRate` 时薪测算器 / `computeMiningLedger` 账簿复盘（日·月·矿石·星系）/ **EVE 日边界** `eveDayOf`·`previousEveDay`·`EVE_DOWNTIME_UTC_HOUR=11` / 原矿直卖兜底）；`sde/repo.ts` 的 `getSystemNames`；UI `packages/ui/src/calc/MiningPanel.tsx`（计算页第 6 面板） |
 | **LP 比价引擎（P4-3）** | `packages/core/src/engines/lp.ts`（ISK/LP 排名 / LP 组合） |
 | **LP 商店同步与仓储（P4-3）** | `packages/core/src/lp/sync.ts`、`lp/repo.ts`（ESI 公共端点 + ETag/TTL + 整团替换） |
 | **矿石精炼值引擎（P4-4）** | `packages/core/src/engines/refining.ts`（整份精炼 / 产出率 / 税 / 单位产值） |
@@ -775,7 +805,7 @@
 | 个人数据调度（P3-6） | `packages/core/src/personal/scheduler.ts`、`personal/repo.ts`；缓存解析在 `esi/client.ts` 的 `parseCacheControl` |
 | UI：资产页 / 授权 / 同步 Hook | `packages/ui/src/personal/`（AssetsPage.tsx、useCharacters.ts、usePersonalSync.ts） |
 | UI：core 运行时单例（共享调度器 + 令牌） | `packages/ui/src/core/runtime.ts` |
-| **UI：计算器页（P4-5）** | `packages/ui/src/calc/`（CalcPage.tsx 四子页签；RefinePanel.tsx 矿石精炼值；BlueprintPanel.tsx 蓝图成本；LpPanel.tsx LP 比价；**CalcCasePanel.tsx 算例对照**） |
+| **UI：计算器页（P4-5 + P5+）** | `packages/ui/src/calc/`（CalcPage.tsx **六**子页签：蓝图成本 / 库存缺口 / LP 比价 / 矿石精炼值 / **采矿时薪** / 算例对照；RefinePanel.tsx；BlueprintPanel.tsx；LpPanel.tsx；InventoryPanel.tsx；**MiningPanel.tsx**；CalcCasePanel.tsx） |
 | **UI：全域层调度与面板（P5-1）** | `packages/ui/src/market/useGlobalScanner.ts`（App 级：60s 到期检查 / 单飞 / 随暂停停 / 档位读写）+ `packages/ui/src/market/GlobalScanPanel.tsx`（行情页「全域层 · 跨区快照」区块） |
 | **App 级 LP 报价同步（P4-5-3）** | `packages/ui/src/lp/useLpStoreSync.ts`（`LpStoreSyncer` + 启动/角色变化/个人同步后补跑 + `refresh()` force） |
 | **写操作瞬时锁重试（DB-1）** | `packages/core/src/db/retry.ts`（`isTransientLockError` / `retryOnBusy`）；接线在 `db/tauri.ts` |
@@ -1064,4 +1094,29 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 - 核验脚本：`%TEMP%\eve-verify-p54.cjs`（`node eve-verify-p54.cjs <regionId> <basis> [stationId]`；站点级自动改走订单簿 p5 口径）；`%TEMP%\eve-p54-contracts.cjs`（合同分布）；`%TEMP%\eve-p54-jita.cjs`（Jita IV 各站 id/名对照）
 - **过程教训**：真机驱动时按 UIA id 点击撞上标题栏「关闭」把应用点关了一次（见踩坑 #42，改用坐标点击后续顺利）
 - **同事项提醒**：真实库已知不一致 —— `market_history_backfill_state` 多一列 `requests`（仓库 0008 无此列，有意保留，见「## 数据库现状」）
+
+## 会话纪要（2026-09-29 · P5-5 采矿时薪）
+
+> 同上：仅供追溯，权威事实以「## P5 进度」为准。
+
+**该会话完成事项**
+
+| # | 事项 | 结果 | 提交 |
+|---|---|---|---|
+| 1 | 读方案 §6.2「采矿时薪」与 P4-4 `refineOre` → 出「任务清单 + 验收清单」+ 待定口径 | 通过（用户「按建议确认」） | — |
+| 2 | **追加口径（用户提出）**：**EVE 每日停机 11:00 UTC 后结束才算一天** → `eveDayOf` / `previousEveDay` / `EVE_DOWNTIME_UTC_HOUR`；进行中日不计入统计 | 通过 | 见下 |
+| 3 | **P5-5-1** `engines/mining.ts`：`computeMiningRate`（时薪测算器）+ `computeMiningLedger`（账簿复盘：日 / 月 / 矿石 / 星系四维）+ 原矿直卖兜底 + 体积缺失返回 `null`；`sde/repo.ts` +`getSystemNames` | 通过 | 见下 |
+| 4 | **P5-5-2** `mining.test.ts` **16** 条（测算器 5 + 日边界 3 + 账簿 8）；core **390 → 406** 全绿 | 通过 | 见下 |
+| 5 | **P5-5-3** 计算页第 **6** 面板 `MiningPanel.tsx`（上测算器 / 下账簿复盘 + 四张表 + 空态提示） | 通过 | 见下 |
+| 6 | **P5-5-4/5** 静态校验（`tsc` core/ui + `ui build`）+ 真机 + `eve-verify-p55.cjs` 独立复算：测算器 **151,120** / 账簿时薪 **156,091.65** 全部逐项一致；修 1 处显示缺陷 | 通过 | 见下 |
+| 7 | **P5-5-6** DEV_STATUS 更新 + 本地提交 | 通过 | 见下 |
+
+**关键验收证据**：见「## P5 进度」的「P5-5 实测记录 / 口径」。要点：真实库 `mining_ledger` 为 0 行 → 注入 3 行合成数据完成账簿验收（净收益 8,975,270 / 115,000 m³ / 有效 2 天 / 时薪 156,091.65），随后 `cleanup` 清零并复验空态。
+
+**该会话结束时的仓库 / 环境状态**
+
+- 工作区改动：`packages/core/src/engines/{mining.ts,index.ts}`、`packages/core/src/sde/{repo.ts,index.ts}`、`packages/core/test/engines/mining.test.ts`、`packages/ui/src/calc/{MiningPanel.tsx,CalcPage.tsx}`、`DEV_STATUS.md`；**未新增迁移、未动 Rust**
+- 应用**已停止**；真实库 **schema v9**、1 个角色（`WEEK 813`）、`mining_ledger` **0 行**（合成数据已清理）
+- 核验脚本：`%TEMP%\eve-verify-p55.cjs`（测算器，`--ledger` 加账簿）、`%TEMP%\eve-p55-ledger-fixture.cjs`（`insert` / `cleanup` 合成账簿数据）
+- **过程教训**：`computer-use` 的 `type_text` 传 JS 脚本时，正则字面量里含全角括号 `（m³/小时）` 会触发 `SyntaxError: Invalid regular expression flags` → 改用 `set_value` 直接写入输入框（React 受控组件正常响应）
 
