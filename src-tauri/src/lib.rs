@@ -1,4 +1,5 @@
 mod db;
+mod notify;
 mod oauth;
 mod sde;
 mod secrets;
@@ -14,6 +15,8 @@ pub fn run() {
     tauri::Builder::default()
         .manage(db::DbState::default())
         .manage(oauth::OAuthState::default())
+        // 桌面通知（P5-7）：系统通知 / 托盘弹窗
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             app_version,
             db::db_execute,
@@ -33,7 +36,9 @@ pub fn run() {
             oauth::oauth_cancel,
             secrets::secret_set,
             secrets::secret_get,
-            secrets::secret_delete
+            secrets::secret_delete,
+            notify::notify_desktop,
+            notify::notify_webhook_post
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

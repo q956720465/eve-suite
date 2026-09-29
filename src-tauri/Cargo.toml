@@ -22,6 +22,8 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.11.6", features = [] }
 tauri-plugin-log = "2"
+# 桌面通知（P5-7）：系统通知 / 托盘弹窗，Windows 走 WinRT Toast
+tauri-plugin-notification = "2"
 # 数据库：自管 sqlx SQLite 连接池（原 tauri-plugin-sql 的 JS API 无事务能力，已退役）
 sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio"] }
 # SDE 下载与解压（P1）：reqwest 走 rustls 免系统 OpenSSL 依赖；zip 仅需 deflate

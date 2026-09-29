@@ -12,4 +12,5 @@ export * from './esi/index';
 export * from './market/index';
 export * from './engines/index';
 export * from './lp/index';
+export * from './notify/index';
 export * from './personal/index';

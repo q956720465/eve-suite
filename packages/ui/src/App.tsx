@@ -9,6 +9,8 @@ import MarketPage from './market/MarketPage';
 import { useGlobalScanner } from './market/useGlobalScanner';
 import { useMarketCollector } from './market/useMarketCollector';
 import WatchlistPage from './market/WatchlistPage';
+import NotifyPage from './notify/NotifyPage';
+import { useNotifyEngine } from './notify/useNotifyEngine';
 import AssetsPage from './personal/AssetsPage';
 import { useCharacters } from './personal/useCharacters';
 import { usePersonalSync } from './personal/usePersonalSync';
@@ -16,7 +18,7 @@ import SdePage from './sde/SdePage';
 import SpreadPage from './market/SpreadPage';
 import { useHistoryInit } from './market/useHistoryInit';
 
-type Tab = 'sde' | 'market' | 'spread' | 'watchlist' | 'assets' | 'calc';
+type Tab = 'sde' | 'market' | 'spread' | 'watchlist' | 'assets' | 'calc' | 'notify';
 
 const TABS: readonly { id: Tab; label: string }[] = [
   { id: 'sde', label: '数据' },
@@ -25,6 +27,7 @@ const TABS: readonly { id: Tab; label: string }[] = [
   { id: 'watchlist', label: '监视' },
   { id: 'assets', label: '资产' },
   { id: 'calc', label: '计算' },
+  { id: 'notify', label: '提醒' },
 ];
 
 /** 应用壳：环境状态 + 页签导航 + 各功能页（P2 起行情采集在应用级运行） */
@@ -69,6 +72,9 @@ export default function App() {
   // LP 报价同步同样在应用级持有：只抓「角色有 LP 余额的军团」，24h 内不回源
   const lpStore = useLpStoreSync(characters);
   const lastCharacterIdsRef = useRef<string | null>(null);
+
+  // 提醒引擎（P5-7）同样在应用级持有：每 60 秒评估规则，命中即推送（托盘 + 可选 Webhook）
+  const notifyEngine = useNotifyEngine();
 
   useEffect(() => {
     if (!characters.ready || characters.characters.length === 0) return;
@@ -135,7 +141,7 @@ export default function App() {
             ))}
           </nav>
         </div>
-        <p className="subtitle">P5 全域行情 · 跨区价差 · 历史全量 · 库存缺口 · 资产与净值 · 计算器</p>
+        <p className="subtitle">P5 全域行情 · 跨区价差 · 历史全量 · 库存缺口 · 资产与净值 · 计算器 · 提醒</p>
         <p className="meta">
           core 版本：<code>{CORE_VERSION}</code>
         </p>
@@ -153,6 +159,7 @@ export default function App() {
       {tab === 'watchlist' && <WatchlistPage />}
       {tab === 'assets' && <AssetsPage characters={characters} sync={personalSync} />}
       {tab === 'calc' && <CalcPage lpStore={lpStore} />}
+      {tab === 'notify' && <NotifyPage engine={notifyEngine} />}
     </main>
   );
 }
