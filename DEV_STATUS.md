@@ -23,7 +23,7 @@
 | **P5-5 采矿时薪** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 时薪测算器（速率 × 每 m³ 净精炼产值）+ 采矿账簿复盘（按 **EVE 日** 聚合，日界 = 停机 11:00 UTC）；计算页第 **6** 面板 |
 | **P5-6 工业成本闭环** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 工业任务 × 钱包流水（`industry_job_id`）两段对账：安装费「预算 vs 实际」偏差 + 材料预算→产出估值→**毛利闭环**；计算页第 **7** 面板 |
 | **P5-7 提醒系统** | ✅ 完成（真机 + 本地回环 Webhook 真实收包 + 加签独立复算一致） | 托盘通知（Tauri 插件）+ 通用 Webhook（钉钉 HMAC 加签 / 企业微信 / 飞书 / 自定义）+ Undercut 规则 + 监视列表价格带 + 静默时段 + 6h 冷却去重；迁移 **v10**（`notify_rules`）；顶层「提醒」页 |
-| **P6 分发打磨** | 🔄 进行中（P6-1 / P6-2 / P6-3 完成） | 版本统一 + 「关于」页 + 合规与 LICENSE + **面向用户 README** ✅；待做：内置更新器 / 打包冒烟与托盘 Toast 复验；**仓库公开与代码签名待你决策** |
+| **P6 分发打磨** | 🔄 进行中（P6-1 ~ P6-4 完成） | 版本统一 + 「关于」页 + 合规与 LICENSE + 面向用户 README + **内置更新器** ✅；待做：打包冒烟与托盘 Toast 复验 / CI 补强；**仓库公开待你决策**（更新器已就绪，仅生产分发需要公开） |
 
 ## P0 子任务明细
 
@@ -656,7 +656,7 @@
 | **P6-1 版本与元数据** | ✅ 完成（真机验证） | 版本号统一 **1.0.0**；新增 `scripts/sync-version.mjs`（真源 = `tauri.conf.json` → 同步 3 个 `package.json` + `Cargo.toml`，支持 `--check`）；`CORE_VERSION` 改为**读取本包 `package.json`**（源码内不再有版本字面量）；新增顶层「关于」页（版本 / 运行环境 / 数据存放 / 数据来源） |
 | **P6-2 合规与法律** | ✅ 完成（真机验证） | 新增 `LICENSE`（MIT，署名 `q956720465`）；README 顶部声明块 + 文末「许可与合规」章节；「关于」页新增「许可与合规」区块（放在首屏第一块）；**权利方名称更新为 Fenris Creations**（见下方口径） |
 | **P6-3 用户文档** | ✅ 完成 | `README.md` 重写为**面向用户**（约 350 行）：这是什么 / 下载与安装（含 SmartScreen 与 Gatekeeper 处理）/ 首次使用四步 / 功能一览（按页签 + 计算页 7 子页签）/ **FAQ 11 题** / 数据与隐私 / 许可与合规；原开发者内容移至文末「开发者：技术栈与构建」 |
-| P6-4 内置更新器 | 未开始 | `tauri-plugin-updater` + 签名密钥 + 检查/更新 UI + CI 生成 `latest.json` |
+| **P6-4 内置更新器** | ✅ 完成（真机验证 + 验签拦截验证） | `tauri-plugin-updater` + `tauri-plugin-process`（Rust 注册 + capabilities 加 `updater:default` / `process:default`）；`tauri.conf.json` 配 endpoints（GitHub Releases `latest.json`）与 pubkey；签名密钥对已生成（**私钥在仓库外** `%USERPROFILE%\.tauri\eve-suite.key`）；UI：`useUpdater`（启动 10s 静默检查、不自动安装）+ 「关于」页「软件更新」区块（检查 / 立即更新 / 进度 / 状态） |
 | P6-5 打包与真机冒烟 | 未开始 | `tauri build` 出 NSIS/MSI + 首次走查 + **托盘 Toast 复验** + 卸载验证 |
 | P6-6 CI 补强（只改配置、不推送） | 未开始 | macOS x64 入 matrix + tag 产物含 `latest.json` |
 
@@ -707,6 +707,27 @@
 - **单一 README 承载用户文档 + 开发者文档**（不拆 `docs/`），避免多份文档互相漂移；用户内容在前、开发者内容在后
 - 文档中的**每个按钮名与路径都必须是界面上真实存在的文案**（写前先核对源码 / 真机）
 - 明确写出两条最容易被误解的限制：**未签名带来的系统警告与处理方式**（SmartScreen / Gatekeeper）、**提醒仅在应用运行时生效**
+
+**P6-4 实测记录（2026-09-29，真机 + 本地清单服务）**：
+- **依赖与接线**：`Cargo.toml` 加 `tauri-plugin-updater` / `tauri-plugin-process`（编译后 `tauri-plugin-updater v2.13.0` / `tauri-plugin-process v2.4.0`）；`lib.rs` 注册两插件；`capabilities/default.json` 加 `updater:default` / `process:default`（**本阶段唯一需要 capabilities 的插件** —— 因为检查与安装是从渲染进程发起的）；UI 侧装 `@tauri-apps/plugin-updater` / `@tauri-apps/plugin-process`
+- **签名密钥对**：`pnpm tauri signer generate -w %USERPROFILE%\.tauri\eve-suite.key --ci` 生成（**无密码**）；**私钥落仓库外**（不进版本库、未打印到对话），**公钥写入 `tauri.conf.json` 的 `plugins.updater.pubkey`**
+- **端点**：生产为 `https://github.com/q956720465/eve-suite/releases/latest/download/latest.json`（当前仓库私有，**公开后才会生效** —— 这正是「待你决策」的原因）
+- **静态**：`tsc --noEmit`(ui) 通过、`ui build` 通过、`cargo check` 通过
+- **真机（本地清单服务验证）**：临时把 endpoints 指向 `http://127.0.0.1:18090/latest.json`（假清单声明 **1.1.0**）→
+  1. **启动 10 秒后自动检查生效**：未做任何操作，「关于 → 软件更新」已显示 **当前 1.0.0 / 最新 1.1.0 / 状态「发现新版本 1.1.0」**，并带出**发行说明** ✅
+  2. **不自动安装**：「立即更新」按钮此时才变为可点（此前未触发任何下载）✅
+  3. **下载失败如实上报**：点「立即更新」→ 状态 `检查失败：Download request failed with status: 404 Not Found` ✅
+  4. **验签拦截**：让本地服务返回**内容可下载、但签名为占位符**的假安装包 → 点「立即更新」→ 状态 `检查失败：Invalid symbol 95, offset 11`（`95` 即 `_`，正是 `PLACEHOLDER_SIGNATURE` 第 12 个字符）→ **签名不合法即拒绝安装** ✅（界面上「签名不符会被拒绝安装」得到验证）
+  5. Tauri 启动时明确告警：`The updater endpoint ... doesn't use https protocol. This is allowed in development but will fail in release builds` —— 与「生产必须 https」的设计一致
+- **验证后已恢复**：endpoints 改回 GitHub https（已确认文件内容），且**未启用** `dangerousInsecureTransportProtocol` 等 dev 专用开关
+
+**P6-4 口径（已定，经用户确认）**：
+- **检查但不静默安装**：启动后延迟 **10 秒**检查一次；发现新版本只在「关于」页提示，用户点「立即更新」才下载安装，装完 `relaunch()` 重启
+- **验签强制**：更新包必须由持私钥方签名，应用内用配置的公钥校验，不符即拒绝（**不可绕过**）
+- **私钥绝不入库**：生成在 `%USERPROFILE%\.tauri\eve-suite.key`（仓库外）；CI 侧用 `TAURI_SIGNING_PRIVATE_KEY` Secret 注入（P6-6 接线）
+- **端点必须 https**：生产用 GitHub Releases 的 `latest.json`；dev 允许 http（Tauri 会告警）
+- **前置条件**：仓库转公开后更新器才能在生产生效（私有 Release 资产需 token）
+- **不做**：增量 / 差分更新（Tauri 不支持）、强制更新、更新历史与回滚 UI
 
 ## 数据库现状
 
