@@ -23,7 +23,7 @@
 | **P5-5 采矿时薪** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 时薪测算器（速率 × 每 m³ 净精炼产值）+ 采矿账簿复盘（按 **EVE 日** 聚合，日界 = 停机 11:00 UTC）；计算页第 **6** 面板 |
 | **P5-6 工业成本闭环** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 工业任务 × 钱包流水（`industry_job_id`）两段对账：安装费「预算 vs 实际」偏差 + 材料预算→产出估值→**毛利闭环**；计算页第 **7** 面板 |
 | **P5-7 提醒系统** | ✅ 完成（真机 + 本地回环 Webhook 真实收包 + 加签独立复算一致） | 托盘通知（Tauri 插件）+ 通用 Webhook（钉钉 HMAC 加签 / 企业微信 / 飞书 / 自定义）+ Undercut 规则 + 监视列表价格带 + 静默时段 + 6h 冷却去重；迁移 **v10**（`notify_rules`）；顶层「提醒」页 |
-| P6 分发打磨 | 未开始 | 仓库需由私有转公开；macOS 签名 / 公证；**（P5-7 遗留）dev 模式 Toast 需打包后复验** |
+| **P6 分发打磨** | 🔄 进行中（P6-1 完成） | P6-1 版本统一 + 「关于」页 ✅；待做：CCP 合规与 LICENSE / 用户文档 / 内置更新器 / 打包冒烟与托盘 Toast 复验；**仓库公开与代码签名待你决策** |
 
 ## P0 子任务明细
 
@@ -379,7 +379,7 @@
 - **判定分三级**：`零误差`（静态量：基础量 / 产物 / 时长 / run 上限 / 矿石产出量，与行情无关）/ `行情漂移`（价格类量：LP 产出估值、ISK/LP，只展示差值，**不判失败**，因为第三方常量是核对当时的快照）/ `不一致`（真正不等）
 - 名称解析统一走 `getTypeNames`，且**一次性取完再组装文案**（避免把名称状态带进 Hook 依赖链引发重算循环）
 
-## P5 进度（进行中）
+## P5 进度（已完成）
 
 | 子任务 | 状态 | 备注 |
 |---|---|---|
@@ -649,6 +649,35 @@
 - **仅应用运行时生效**（单机固有属性，方案 §7.2）
 - **明确不做**：提醒历史表（只存 `last_fired_at` + 界面「最近检查」回显）、邮件 SMTP、Telegram / Discord 模板（留扩展）
 
+## P6 进度（进行中）
+
+| 子任务 | 状态 | 备注 |
+|---|---|---|
+| **P6-1 版本与元数据** | ✅ 完成（真机验证） | 版本号统一 **1.0.0**；新增 `scripts/sync-version.mjs`（真源 = `tauri.conf.json` → 同步 3 个 `package.json` + `Cargo.toml`，支持 `--check`）；`CORE_VERSION` 改为**读取本包 `package.json`**（源码内不再有版本字面量）；新增顶层「关于」页（版本 / 运行环境 / 数据存放 / 数据来源） |
+| P6-2 CCP 合规与法律 | 未开始 | `LICENSE`（MIT）+ README 合规声明 + 「关于」页声明区块 |
+| P6-3 用户文档 | 未开始 | README 重写为面向用户（安装 → 授权 → 看净值 + FAQ） |
+| P6-4 内置更新器 | 未开始 | `tauri-plugin-updater` + 签名密钥 + 检查/更新 UI + CI 生成 `latest.json` |
+| P6-5 打包与真机冒烟 | 未开始 | `tauri build` 出 NSIS/MSI + 首次走查 + **托盘 Toast 复验** + 卸载验证 |
+| P6-6 CI 补强（只改配置、不推送） | 未开始 | macOS x64 入 matrix + tag 产物含 `latest.json` |
+
+**P6-1 实测记录（2026-09-29，真机）**：
+- 静态：core **447** 全绿、`tsc --noEmit`（core / ui）、`ui build` 通过；`node scripts/sync-version.mjs --check` 幂等通过（二次执行输出「全部落点已一致（无改动）」）
+- **版本落点整治**（改前 5 处各自硬编码 → 现 1 真源 + 4 同步点 + 源码零字面量）：
+  - 真源 `src-tauri/tauri.conf.json` → **`1.0.0`**
+  - 脚本同步：`package.json` / `packages/core/package.json` / `packages/ui/package.json`（各 `0.0.0 → 1.0.0`）、`src-tauri/Cargo.toml`（`[package] version`）
+  - **源码消除硬编码**：`packages/core/src/index.ts` 的 `CORE_VERSION` 改为 `import pkg from '../package.json'` 读取（构建期内联；`core.test.ts` 的 semver 断言仍通过）
+  - 新增 npm script：`version:sync` / `version:check`
+- **真机**（`tauri dev`）：
+  - 编译日志出现 `Compiling eve-suite **v1.0.0**`（Cargo 版本已生效）
+  - 顶栏「core 版本：**1.0.0**」「Tauri 窗口 · 壳版本 **1.0.0**」「就绪 · schema v10 · 本次应用 **0** 个迁移」
+  - 新增第 **8** 个页签「**关于**」；页内三块：**版本与运行环境**（EVE Suite **1.0.0** / core **1.0.0** / schema v10 / 日志模式 wal / Tauri 窗口）、**数据与隐私**（零服务器无遥测 + 三平台数据库路径 + 令牌存钥匙串 / Webhook 配置存 `settings`）、**数据来源**（SDE / ESI / 本地估值口径）
+  - 副标题更新为「全域行情 · 跨区价差 · 历史全量 · 库存缺口 · 工业对账 · 采矿时薪 · 资产与净值 · 提醒」（去掉阶段前缀，补上 P5-5 / P5-6 两项）
+
+**P6-1 口径（已定，经用户确认）**：
+- **版本真源唯一** = `src-tauri/tauri.conf.json`（打包实际使用）；其余落点**只能由脚本同步，禁止手工改**
+- 版本号取 **`1.0.0`**（六大整合功能全部落地，视为首个正式可用版本）
+- License 拟 **MIT**、仓库拟定**转公开**（P6-2 / P6-4 落地）；**代码签名与邮件通道本期不做**（用户已确认）
+
 ## 数据库现状
 
 - schema 版本：**v10**（v1 settings + v2 SDE 11 表 + v3 行情 7 表 + v4 个人数据 10 表 + v5 LP 商店 3 表 + v6 类型材料 1 表 + v7 全域扫描状态 1 表 + v8 历史预拉状态 1 表 + v9 历史 date 索引 + **v10 提醒规则 1 表**）
@@ -674,7 +703,7 @@
 
 ## 下一步
 
-1. **P0–P5 全部完成**（四大引擎 + 计算器页 **7** 面板 + 全域 6 小时层 + 跨区价差视图 + 历史预拉与 400 天全量初始化 + 库存缺口 + 精确净值 + 采矿时薪 + 工业成本闭环 + **提醒系统（托盘 + Webhook + Undercut）**）。**下一项 = P6 分发打磨**（内置更新器 / CCP 合规标注 / 用户文档 / Windows 代码签名 / macOS 公证，含 **P5-7 遗留的 dev 模式 Toast 复验**）；P5 剩余的 **LP BPC 产出估值**待办单独立项。**开工前先出「任务清单 + 验收清单」交用户确认**。
+1. **P0–P5 全部完成；P6 进行中（P6-1 ✅）**。P6 剩余：**P6-2 合规与 LICENSE** → P6-3 用户文档 → P6-4 内置更新器 → P6-5 打包冒烟与托盘 Toast 复验 → P6-6 CI 补强。**待你决策**：仓库是否转公开（内置更新器的硬前置）。P5 剩余的 **LP BPC 产出估值**待办可单独立项。**每个子任务开工前先出「任务清单 + 验收清单」交用户确认**。
 2. **待推送**：本地有多个提交未推送（起点 `9130776` 起累积）；推送时机由用户掌控（推送后 CI 才会跑）
 3. 已知待办（非阻塞；凡涉及改动已有代码，均需先出方案并确认）：
    - ~~**P2 行情采集未用共享调度器**~~ **已统一（2026-09-28，P5-1-0）**：`useMarketCollector` 改为取 `initCoreRuntime()` 的共享 db / client / scheduler，枢纽层与全域层共用同一优先级队列、「让路」生效；仍未做的是「全域层与个人数据同步是否再分层限速」
@@ -890,6 +919,8 @@
 | **提醒通道（Rust，P5-7）** | `src-tauri/src/notify.rs`（`notify_desktop` / `notify_webhook_post`）；`lib.rs` 注册 `tauri-plugin-notification` 与新命令 |
 | 迁移 0010（提醒规则，P5-7） | `packages/core/src/db/migrations/0010-notify-rules.ts`（`notify_rules` 表 + kind 索引 + 价格带部分唯一索引） |
 | Tauri 壳（命令注册） | `src-tauri/src/lib.rs` |
+| **版本同步脚本（P6-1）** | `scripts/sync-version.mjs`（真源 = `src-tauri/tauri.conf.json` → 同步 3 个 `package.json` + `Cargo.toml`；`--check` 供 CI 校验一致性） |
+| **UI：关于页（P6-1）** | `packages/ui/src/about/AboutPage.tsx`（版本与运行环境 / 数据与隐私 / 数据来源） |
 | CI workflow | `.github/workflows/build.yml` |
 | 方案（唯一事实来源） | `EVE 工具套件 · 单机桌面版完整开发方案.md` |
 
