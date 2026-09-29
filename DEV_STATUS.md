@@ -23,7 +23,7 @@
 | **P5-5 采矿时薪** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 时薪测算器（速率 × 每 m³ 净精炼产值）+ 采矿账簿复盘（按 **EVE 日** 聚合，日界 = 停机 11:00 UTC）；计算页第 **6** 面板 |
 | **P5-6 工业成本闭环** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 工业任务 × 钱包流水（`industry_job_id`）两段对账：安装费「预算 vs 实际」偏差 + 材料预算→产出估值→**毛利闭环**；计算页第 **7** 面板 |
 | **P5-7 提醒系统** | ✅ 完成（真机 + 本地回环 Webhook 真实收包 + 加签独立复算一致） | 托盘通知（Tauri 插件）+ 通用 Webhook（钉钉 HMAC 加签 / 企业微信 / 飞书 / 自定义）+ Undercut 规则 + 监视列表价格带 + 静默时段 + 6h 冷却去重；迁移 **v10**（`notify_rules`）；顶层「提醒」页 |
-| **P6 分发打磨** | 🔄 进行中（P6-1 ~ P6-4 完成） | 版本统一 + 「关于」页 + 合规与 LICENSE + 面向用户 README + **内置更新器** ✅；**仓库已转公开、62 个提交已推送、三平台 CI 全绿** ✅；待做：打包冒烟与托盘 Toast 复验（P6-5）/ CI 补强（P6-6） |
+| **P6 分发打磨** | 🔄 进行中（P6-1 ~ P6-4、P6-6 完成） | 版本统一 + 「关于」页 + 合规与 LICENSE + 面向用户 README + **内置更新器** + **CI 补强（测试 447 / universal macOS / 更新清单）** ✅；仓库已公开、三平台 CI 全绿 ✅；**仅剩 P6-5 打包冒烟与托盘 Toast 复验**（按用户指示挂起） |
 
 ## P0 子任务明细
 
@@ -658,7 +658,7 @@
 | **P6-3 用户文档** | ✅ 完成 | `README.md` 重写为**面向用户**（约 350 行）：这是什么 / 下载与安装（含 SmartScreen 与 Gatekeeper 处理）/ 首次使用四步 / 功能一览（按页签 + 计算页 7 子页签）/ **FAQ 11 题** / 数据与隐私 / 许可与合规；原开发者内容移至文末「开发者：技术栈与构建」 |
 | **P6-4 内置更新器** | ✅ 完成（真机验证 + 验签拦截验证） | `tauri-plugin-updater` + `tauri-plugin-process`（Rust 注册 + capabilities 加 `updater:default` / `process:default`）；`tauri.conf.json` 配 endpoints（GitHub Releases `latest.json`）与 pubkey；签名密钥对已生成（**私钥在仓库外** `%USERPROFILE%\.tauri\eve-suite.key`）；UI：`useUpdater`（启动 10s 静默检查、不自动安装）+ 「关于」页「软件更新」区块（检查 / 立即更新 / 进度 / 状态） |
 | P6-5 打包与真机冒烟 | 未开始 | `tauri build` 出 NSIS/MSI + 首次走查 + **托盘 Toast 复验** + 卸载验证 |
-| P6-6 CI 补强 | 未开始 | ① 加 `pnpm --filter @eve-suite/core test`（并把 CI Node 由 22 升到 24 —— 测试依赖 `node:sqlite`）② macOS x64 入 matrix ③ tag 时生成 `latest.json` + 配 `TAURI_SIGNING_PRIVATE_KEY` Secret |
+| **P6-6 CI 补强** | ✅ 完成（本地校验 + 待推送验证） | ① 新增 `Run core tests`（**447** 单测）+ CI Node **22 → 24** ② macOS 改出 **universal 包**（`--target universal-apple-darwin`；`macos-13` 已退役）③ 新增 `src-tauri/tauri.updater.conf.json` + `scripts/build-latest-json.mjs`，tag 构建条件合并配置生成 `.sig` 与 `latest.json` ④ artifact 名与产物路径同步更新 |
 
 **发布链路验证（2026-09-29）**：
 - **仓库已转公开**（用户操作）→ 内置更新器的生产端点（GitHub Releases 的 `latest.json`）已具备可用前提
@@ -738,6 +738,30 @@
 - **前置条件**：仓库转公开后更新器才能在生产生效（私有 Release 资产需 token）
 - **不做**：增量 / 差分更新（Tauri 不支持）、强制更新、更新历史与回滚 UI
 
+**P6-6 实测记录（2026-09-29，本地校验；CI 待推送验证）**：
+- **查证驱动的一次方案修正**：`macos-13` 已于 **2025-12-04 退役**（GitHub Changelog）；现存 Intel 标签是 `macos-15-intel`，但 Apple 已弃 x86_64、GitHub 将在 macOS 15 镜像退役（**2027 秋**）后停止提供 Intel runner → **改用 universal 包**（`--target universal-apple-darwin`），而不是加一台即将消失的 runner
+- **`scripts/build-latest-json.mjs`（新增，可离线验证）**：从 bundle 目录的各产物 + `.sig` 组装 Tauri v2 的 `latest.json`
+  - **universal dmg 同时登记 `darwin-aarch64` 与 `darwin-x86_64`**（两种 Mac 拿同一个包，**不依赖** `darwin-universal` 回退语义）
+  - 文件名含空格时 URL 用 `encodeURIComponent`；**缺 `.sig` 的产物跳过并告警**（不写入无法校验的条目）
+  - 本地验证（假产物目录）：生成 **4** 个平台条目 ✅、universal dmg 双登记 ✅、`EVE%20Suite_1.0.0_x64-setup.exe` 空格编码 ✅
+- **`.github/workflows/build.yml`**：
+  - 三平台矩阵改为 `windows` / `macos-universal` / `linux`（artifact 名随之改为 `eve-suite-<name>`）
+  - **新增 `Run core tests`**（`pnpm --filter @eve-suite/core test`，447 单测），置于构建之前（快速失败）
+  - **CI Node 22 → 24**（与本地 / README 对齐；`node:sqlite` 摆脱实验性）
+  - macOS 增加 `rustup target add aarch64-apple-darwin x86_64-apple-darwin`
+  - **tag 构建条件合并更新器配置**：`pnpm tauri build ${{ matrix.args }} ${{ env.IS_RELEASE == 'true' && '--config src-tauri/tauri.updater.conf.json' || '' }}` —— 日常 push **不**开启 `createUpdaterArtifacts`，因此**未配 Secret 也不会让日常构建变红**
+  - `release` job 新增 **`Generate latest.json`**（`GITHUB_REF_NAME` 去 `v` 前缀作版本号、`github.server_url` + `repository` 拼下载前缀）；Release 资产含 `.sig` 与 `latest.json`
+- **待办（依赖用户）**：配 `TAURI_SIGNING_PRIVATE_KEY` Secret（不配则**仅 tag 发版会失败**）；**tag 发布流程本期未实测**（要真发版才有意义）
+- 未改应用代码（仅新增 `src-tauri/tauri.updater.conf.json` 一个覆盖配置文件）
+
+**P6-6 口径（已定，经用户确认）**：
+- **macOS 用 universal 包**（替代加 Intel runner）：一个 dmg 覆盖两种 Mac，且不依赖 2027 秋将被移除的 Intel runner；若 CI 上 universal 编译失败，退回「加 `macos-15-intel` 出第二个 dmg」
+- **CI 必须跑测试**（447 单测）→ 顺带把 CI Node 提到 **24**
+- **更新器产物只在 tag 构建启用**（`--config` 条件合并）：保证日常 push 构建不依赖任何 Secret
+- **`latest.json` 自己生成**（不用 `tauri-apps/tauri-action`，避免它接管 Release 创建流程）
+- **不升级 action 大版本**（与开工清单的初步建议不同，说明理由）：第一方 actions 的 `@v4` tag 已由 GitHub 原地更新为 node24 运行时（当日 CI 全绿即为证），而各 action 的最新大版本号无法在本机离线核实 —— 改动版本号的风险大于收益
+- **不做**：Windows / macOS 代码签名（需自费证书）、发布渠道分流（beta/stable）、增量更新
+
 ## 数据库现状
 
 - schema 版本：**v10**（v1 settings + v2 SDE 11 表 + v3 行情 7 表 + v4 个人数据 10 表 + v5 LP 商店 3 表 + v6 类型材料 1 表 + v7 全域扫描状态 1 表 + v8 历史预拉状态 1 表 + v9 历史 date 索引 + **v10 提醒规则 1 表**）
@@ -763,7 +787,7 @@
 
 ## 下一步
 
-1. **P0–P5 全部完成；P6 进行中（P6-1 ~ P6-4 完成）**。P6 剩余：**P6-5 打包冒烟与托盘 Toast 复验**（`tauri build` → 安装 → 首次走查 → 卸载；**已按用户指示「暂不打包」挂起**）→ **P6-6 CI 补强**（macOS x64 入 matrix + tag 生成 `latest.json` + 配 `TAURI_SIGNING_PRIVATE_KEY`）。**待用户决策 / 操作**：~~① 仓库是否转公开（内置更新器生产生效的前置）~~ **已于 2026-09-29 转公开**；② Windows 代码签名与 macOS 公证（需自费证书，本期不做）③ 备份更新签名私钥（`%USERPROFILE%\.tauri\eve-suite.key`，丢失则无法再发更新）。P5 剩余的 **LP BPC 产出估值**可单独立项。**每个子任务开工前先出「任务清单 + 验收清单」交用户确认**。
+1. **P0–P5 全部完成；P6 进行中（P6-1 ~ P6-4、P6-6 完成）**。P6 剩余：**P6-5 打包冒烟与托盘 Toast 复验**（`tauri build` → 安装 → 首次走查 → 卸载；**已按用户指示「暂不打包」挂起**）。**待用户操作**：① 配 GitHub Secret `TAURI_SIGNING_PRIVATE_KEY`（不配则仅 **tag 发版**会失败，日常构建不受影响）② 备份更新签名私钥（`%USERPROFILE%\.tauri\eve-suite.key`，丢失则无法再发更新）；**不做**：Windows 代码签名与 macOS 公证（需自费证书）。P5 剩余的 **LP BPC 产出估值**可单独立项。**每个子任务开工前先出「任务清单 + 验收清单」交用户确认**。
 2. **推送状态**：2026-09-29 已把 **62** 个提交推送至 `main`（`9130776..470b136`），**仓库已转公开**，三平台 CI **全绿**（run `36522675223`）；后续提交的推送时机仍由用户掌控
 3. 已知待办（非阻塞；凡涉及改动已有代码，均需先出方案并确认）：
    - ~~**P2 行情采集未用共享调度器**~~ **已统一（2026-09-28，P5-1-0）**：`useMarketCollector` 改为取 `initCoreRuntime()` 的共享 db / client / scheduler，枢纽层与全域层共用同一优先级队列、「让路」生效；仍未做的是「全域层与个人数据同步是否再分层限速」

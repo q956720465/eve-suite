@@ -299,14 +299,23 @@ pnpm tauri dev
 ```bash
 pnpm version:sync                     # 可选：把 tauri.conf.json 的版本同步到各包与 Cargo.toml
 pnpm tauri build                      # 当前平台全量打包
+
+# macOS 出 universal 包（一个 dmg 同时支持 Apple Silicon 与 Intel）
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+pnpm tauri build --target universal-apple-darwin
 ```
+
+**发版（推 `v*` tag）** 时 CI 会额外合并 `src-tauri/tauri.updater.conf.json`
+（开启 `createUpdaterArtifacts`），生成更新器所需的 `.sig` 与 `latest.json` ——
+这一步需要仓库 Secret **`TAURI_SIGNING_PRIVATE_KEY`**（内容为 `tauri signer generate` 生成的私钥）；
+日常 push 构建不使用它。
 
 产物位置：`src-tauri/target/release/bundle/`
 
 | 平台 | 产物 |
 |---|---|
 | Windows | `nsis/EVE Suite_<版本>_x64-setup.exe`、`msi/EVE Suite_<版本>_x64_en-US.msi` |
-| macOS | `dmg/*.dmg`（未签名 / 未公证，首次打开需右键 → 打开） |
+| macOS | `dmg/*_universal.dmg`（**universal 包**，同时支持 Apple Silicon 与 Intel；未签名 / 未公证，首次打开需右键 → 打开） |
 | Linux | `deb/*.deb`、`rpm/*.rpm`、`appimage/*.AppImage` |
 
 > Windows 首次打包需联网下载 WiX（MSI 工具）与 NSIS 工具，缓存于 `%LOCALAPPDATA%\tauri\`。
@@ -339,8 +348,8 @@ workflow 文件：`.github/workflows/build.yml`
 
 | 触发 | 行为 |
 |---|---|
-| push 到 `main` | 三平台（windows-latest / macos-latest / ubuntu-22.04）并行构建，产物上传到该次运行的 Artifacts |
-| push `v*` tag | 等三平台构建全部完成后，把全部安装包自动发布到 GitHub Release |
+| push 到 `main` | **跑 core 单测** + 三平台（windows / macos-universal / ubuntu-22.04）并行构建，产物上传到该次运行的 Artifacts |
+| push `v*` tag | 等三平台构建全部完成后，把全部安装包（含更新器签名 `.sig` 与 `latest.json`）自动发布到 GitHub Release |
 
 ### 数据库约定
 
