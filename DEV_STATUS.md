@@ -1318,7 +1318,7 @@ Fuzzwork `/aggregates` 返回**两个**不同的价格字段 —— 先前待办
 ## 下一步
 
 1. **P0–P5 全部完成；P6 进行中（仅剩 P6-5）；P7 全部完成；P8 进行中（P8-1 完成）；P9-1 市场浏览界面全部完成并验收；P10-1 站点级比价完成；P11-1 ~ P11-6 全部完成（挂单量加权口径 / 价差页订单簿深度走量 / 价差页流动性与库存天数 / 价差页现实捕获份额 / 价差页取单查询计划优化 / 其它取单查询计划审计与修复）**。P6 剩余：**P6-5 打包冒烟与托盘 Toast 复验**（`tauri build` → 安装 → 首次走查 → 卸载；**已按用户指示「暂不打包」挂起**）。P8 剩余候选见「## 未做项目总览 §3」（**站点级比价、分位口径、订单簿深度走量、库存天数 / 成交天数、现实捕获份额、取单查询计划优化（含其它读取点）均已完成**；「价差视图二期」**候选已清空**）。**待用户操作**：① 配 GitHub Secret `TAURI_SIGNING_PRIVATE_KEY`（不配则仅 **tag 发版**会失败，日常构建不受影响）② 备份更新签名私钥（`%USERPROFILE%\.tauri\eve-suite.key`，丢失则无法再发更新）；**不做**：Windows 代码签名与 macOS 公证（需自费证书）、**公司端点同步（2026-09-29 用户决定，见 P7-4 口径）**。**每个子任务开工前先出「任务清单 + 验收清单」交用户确认**。
-2. **推送状态**：2026-09-29 已把 **62** 个提交推送至 `main`（`9130776..470b136`），**仓库已转公开**，三平台 CI 全绿（run `36522675223`）；随后把 **P7-2 ~ P11-6 阶段性成果**（2 个提交：`9128270` P6-6 收尾 docs + `ad55063` 成果汇总，共 **48 文件 / +6442 −191**）推送至 `main`（`fd1e4c6..ad55063`）→ **三平台 CI 再次全绿**（run `36582860179`：`build (windows)` **success** / `build (macos-universal)` **success** / `build (linux)` **success**；`release (tag only)` 按设计 **skipped**；⚠️ **该 run 首次包含 `Run Rust tests` 步骤** → **16 个 Rust 单测在 CI 实测通过**，P7-2「Rust 纳入 CI」由此获得运行验证）。后续提交的推送时机仍由用户掌控
+2. **推送状态**：2026-09-29 已把 **62** 个提交推送至 `main`（`9130776..470b136`），**仓库已转公开**，三平台 CI 全绿（run `36522675223`）；随后把 **P7-2 ~ P11-6 阶段性成果**（2 个提交：`9128270` P6-6 收尾 docs + `ad55063` 成果汇总，共 **48 文件 / +6442 −191**）推送至 `main`（`fd1e4c6..ad55063`）→ **三平台 CI 再次全绿**（run `36582860179`：`build (windows)` **success** / `build (macos-universal)` **success** / `build (linux)` **success**；`release (tag only)` 按设计 **skipped**；⚠️ **该 run 首次包含 `Run Rust tests` 步骤** → **16 个 Rust 单测在 CI 实测通过**，P7-2「Rust 纳入 CI」由此获得运行验证）；再推 **`eb0e47c`**（本次补记的 docs 提交）→ run **`36585312912`** 三平台**仍全绿**（macOS 13m2s / linux 7m44s / windows 7m22s，三平台 artifact 齐备）。**复核工具**：本机已装 **`gh` CLI 2.101.0 并认证为 `q956720465`**（凭据存 Windows keyring）→ 此后可直接 `gh run list` / `gh run view <id>` 查 CI（未认证 REST API 仅 60 次/小时，易被限流，见「## 本机环境（已验证）」）。后续提交的推送时机仍由用户掌控
 3. 已知待办（非阻塞；凡涉及改动已有代码，均需先出方案并确认）——**归类索引见「## 未做项目总览」**：
    - ~~**P2 行情采集未用共享调度器**~~ **已统一（2026-09-28，P5-1-0）**：`useMarketCollector` 改为取 `initCoreRuntime()` 的共享 db / client / scheduler，枢纽层与全域层共用同一优先级队列、「让路」生效；仍未做的是「全域层与个人数据同步是否再分层限速」
    - ~~**core 数据库层对瞬时锁的容错**~~ **已修复（2026-09-28，DB-1）**：根因不是「瞬时锁等不到」而是**事务会话泄漏写锁**，详见「DB 并发写容错（DB-1）」与踩坑 #28；同时补了瞬时锁退避重试（`db/retry.ts`）
@@ -1610,7 +1610,13 @@ Fuzzwork `/aggregates` 返回**两个**不同的价格字段 —— 先前待办
 
 ## 本机环境（已验证）
 
-node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· git 2.55.0（Windows）· 屏幕 2560×1440 @150%
+node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· git 2.55.0（Windows）· **gh CLI 2.101.0（2026-09-29 装，已认证）** · 屏幕 2560×1440 @150%
+
+**CI 复核（gh CLI，2026-09-29 装并认证）**：
+- 路径 `C:\Program Files\GitHub CLI\gh.exe`（机器级 PATH 已注册）；登录方式为**浏览器设备码**，凭据存 **Windows keyring**，账号 `q956720465`，token scopes `gist` / `read:org` / `repo`
+- 常用：`gh run list --limit 5` · `gh run view <run-id>`（逐 job + artifact + 注解）· `gh run view <run-id> --log-failed`
+- ⚠️ **新装工具后，已存在的 shell 不会自动刷新 PATH**（环境在进程启动时固定）→ 旧终端需 `$env:Path += ';C:\Program Files\GitHub CLI\'`，或直接调用全路径
+- ⚠️ **未认证**的 GitHub REST API 仅 **60 次/小时**（按 IP），轮询 CI 很容易 403 限流；认证后为 5000 次/小时 —— 故**查 CI 优先用 `gh`**，不要用裸 `Invoke-RestMethod api.github.com` 轮询
 
 **CCP 开发者应用（EVE SSO）配置**：
 - `client_id` = `f08a568e43694797ac48637012682c1a`（已内置在 `packages/core/src/esi/oauth.ts` 的 `EVE_CLIENT_ID`）
@@ -2332,7 +2338,8 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 **该会话结束时的仓库 / 环境状态**
 
 - 工作区改动（P11-1 ~ P11-6）：`db/migrations/0012-weighted-price.ts`（新增）/ `db/migrations/index.ts` / `market/stats.ts` / `market/rows.ts` / `market/index.ts` / `market/spread.ts` / `market/repo.ts` / `market/browse.ts` / `engines/valuation.ts` / `engines/index.ts` / `notify/rules.ts` / `test/market/stats.test.ts` / `test/market/spread.test.ts` / `test/engines/valuation.test.ts` / `test/engines/fixtures.ts` / `ui` 4 处标签 / `ui/src/market/SpreadPage.tsx`；连同 P9/P10 全程累计（P11-5 / P11-6 均**无新增文件**）
-- **提交与推送**：以上自 P6-6 以来积压的全部成果（含 P7-2 ~ P11-6）已提交为 **`ad55063`**（48 文件 / +6442 −191）并推送至 `main`（`fd1e4c6..ad55063`）→ **三平台 CI 全绿**：run **`36582860179`**（`windows` / `macos-universal` / `linux` 均 success，`release (tag only)` skipped）；⚠️ 该 run **首次包含 `Run Rust tests`** → **16 个 Rust 单测在 CI 实测通过**。**工作区已干净、与 `origin/main` 同步（0 待推送）**
+- **提交与推送**：以上自 P6-6 以来积压的全部成果（含 P7-2 ~ P11-6）已提交为 **`ad55063`**（48 文件 / +6442 −191）并推送至 `main`（`fd1e4c6..ad55063`）→ **三平台 CI 全绿**：run **`36582860179`**（`windows` / `macos-universal` / `linux` 均 success，`release (tag only)` skipped）；⚠️ 该 run **首次包含 `Run Rust tests`** → **16 个 Rust 单测在 CI 实测通过**。其后又推 **`eb0e47c`**（P11-6 补记的 docs 提交）→ run **`36585312912`** 三平台**仍全绿**（macOS 13m2s / linux 7m44s / windows 7m22s，三平台 artifact 齐备）。**工作区已干净、与 `origin/main` 同步（0 待推送）**
+  - **复核工具**：本会话安装了 **`gh` CLI 2.101.0**（winget）并完成**浏览器设备码认证**（账号 `q956720465`，凭据存 Windows keyring）→ 此后 CI 可直接 `gh run list` / `gh run view <id>` 复核；详见「## 本机环境（已验证）」
   - ⚠️ 本文件此前各会话条目里写的「**全部未提交未推送**」是**当时**的准确状态；那些积压已由本次 `ad55063` **一次性提交并推送**，以本条为准
   - 合并为一次提交的原因：`market/index.ts` / `engines/index.ts` / `migrations/index.ts` 等 barrel 文件跨阶段聚合，按阶段拆会让中间提交引用尚未提交的导出、**无法编译**
 - 运行库：**schema v12**（迁移已应用）、`market_stats` 211,500 行、`market_history_daily` 8,332,897 行；单文件 1,409,110,016 字节（WAL 无残留）
