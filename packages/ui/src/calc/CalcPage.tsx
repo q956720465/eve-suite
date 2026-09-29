@@ -6,19 +6,21 @@ import BlueprintPanel from './BlueprintPanel';
 import CalcCasePanel from './CalcCasePanel';
 import InventoryPanel from './InventoryPanel';
 import LpPanel from './LpPanel';
+import MiningPanel from './MiningPanel';
 import RefinePanel from './RefinePanel';
 
-type CalcTab = 'blueprint' | 'lp' | 'refine' | 'case' | 'inventory';
+type CalcTab = 'blueprint' | 'lp' | 'refine' | 'mining' | 'case' | 'inventory';
 
 const CALC_TABS: readonly { id: CalcTab; label: string }[] = [
   { id: 'blueprint', label: '蓝图成本' },
   { id: 'inventory', label: '库存缺口' },
   { id: 'lp', label: 'LP 比价' },
   { id: 'refine', label: '矿石精炼值' },
+  { id: 'mining', label: '采矿时薪' },
   { id: 'case', label: '算例对照' },
 ];
 
-/** 计算器页：三大计算器（蓝图成本 / LP 比价 / 矿石精炼值）+ 库存缺口分析 + 算例对照 */
+/** 计算器页：三大计算器（蓝图成本 / LP 比价 / 矿石精炼值）+ 库存缺口 + 采矿时薪 + 算例对照 */
 export default function CalcPage({ lpStore }: { lpStore: LpStoreSyncHandle }) {
   const [tab, setTab] = useState<CalcTab>('refine');
 
@@ -40,6 +42,7 @@ export default function CalcPage({ lpStore }: { lpStore: LpStoreSyncHandle }) {
       {tab === 'refine' && <RefinePanel />}
       {tab === 'blueprint' && <BlueprintPanel />}
       {tab === 'inventory' && <InventoryPanel />}
+      {tab === 'mining' && <MiningPanel />}
       {tab === 'lp' && <LpPanel lpStore={lpStore} />}
       {tab === 'case' && <CalcCasePanel />}
     </section>

@@ -229,6 +229,53 @@ export async function getStationNames(
   return result;
 }
 
+/** 星系名（批量查询结果，含安全等级与所属区域） */
+export interface SystemNameEntry {
+  nameEn: string;
+  nameZh: string | null;
+  regionId: number;
+  securityStatus: number | null;
+}
+
+/**
+ * 批量取星系名（采矿账簿的「按星系」视角等展示用）。
+ * 未收录的 id 不会出现在结果中（调用方兜底显示 id）。
+ */
+export async function getSystemNames(
+  db: DbAdapter,
+  systemIds: readonly number[],
+): Promise<Map<number, SystemNameEntry>> {
+  const result = new Map<number, SystemNameEntry>();
+  const unique = [...new Set(systemIds)];
+  for (let offset = 0; offset < unique.length; offset += TYPE_NAME_CHUNK) {
+    const chunk = unique.slice(offset, offset + TYPE_NAME_CHUNK);
+    if (chunk.length === 0) continue;
+    const placeholders = chunk.map(() => '?').join(', ');
+    const rows = await db.select<{
+      systemId: number;
+      nameEn: string;
+      nameZh: string | null;
+      regionId: number;
+      securityStatus: number | null;
+    }>(
+      `SELECT system_id AS systemId, name_en AS nameEn, name_zh AS nameZh,
+              region_id AS regionId, security_status AS securityStatus
+         FROM sde_systems
+        WHERE system_id IN (${placeholders})`,
+      chunk,
+    );
+    for (const row of rows) {
+      result.set(row.systemId, {
+        nameEn: row.nameEn,
+        nameZh: row.nameZh,
+        regionId: row.regionId,
+        securityStatus: row.securityStatus,
+      });
+    }
+  }
+  return result;
+}
+
 /** 空间站搜索：站名 / 星系名 / 星域名 三处匹配（如搜 Jita 可命中 The Forge 的站） */
 export async function searchStations(
   db: DbAdapter,

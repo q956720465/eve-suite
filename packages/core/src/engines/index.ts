@@ -51,6 +51,26 @@ export type {
   InventoryHubSummary,
 } from './inventory';
 
+export {
+  EVE_DOWNTIME_UTC_HOUR,
+  computeMiningLedger,
+  computeMiningRate,
+  eveDayOf,
+  previousEveDay,
+} from './mining';
+export type {
+  MiningLedgerDay,
+  MiningLedgerMonth,
+  MiningLedgerOreLine,
+  MiningLedgerOptions,
+  MiningLedgerResult,
+  MiningLedgerSystemLine,
+  MiningRateInput,
+  MiningRateResult,
+  MiningUnfinishedDay,
+  MiningValuationOptions,
+} from './mining';
+
 export { buildLpPortfolio, computeOfferValue, rankLpOffers } from './lp';
 export type {
   LpOfferRanking,
