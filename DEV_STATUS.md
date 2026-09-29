@@ -22,8 +22,8 @@
 | **P5-4 精确净值补完** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 合同分项落地 + **跨角色合计净值** + **基准可切（区域/站点/口径/离群）** + 具名缺价明细（资产页） |
 | **P5-5 采矿时薪** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 时薪测算器（速率 × 每 m³ 净精炼产值）+ 采矿账簿复盘（按 **EVE 日** 聚合，日界 = 停机 11:00 UTC）；计算页第 **6** 面板 |
 | **P5-6 工业成本闭环** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 工业任务 × 钱包流水（`industry_job_id`）两段对账：安装费「预算 vs 实际」偏差 + 材料预算→产出估值→**毛利闭环**；计算页第 **7** 面板 |
-| P5-7~ 整合功能 | 未开始 | 提醒系统（托盘 + Webhook）+ Undercut |
-| P6 分发打磨 | 未开始 | 仓库需由私有转公开；macOS 签名 / 公证 |
+| **P5-7 提醒系统** | ✅ 完成（真机 + 本地回环 Webhook 真实收包 + 加签独立复算一致） | 托盘通知（Tauri 插件）+ 通用 Webhook（钉钉 HMAC 加签 / 企业微信 / 飞书 / 自定义）+ Undercut 规则 + 监视列表价格带 + 静默时段 + 6h 冷却去重；迁移 **v10**（`notify_rules`）；顶层「提醒」页 |
+| P6 分发打磨 | 未开始 | 仓库需由私有转公开；macOS 签名 / 公证；**（P5-7 遗留）dev 模式 Toast 需打包后复验** |
 
 ## P0 子任务明细
 
@@ -392,7 +392,7 @@
 | **P5-4 精确净值补完** | ✅ 完成（真机 + 真实库独立复算逐项一致） | `personal/networth.ts`：**合同分项落地**（P5-4 轻口径）+ 新增 `computeAccountNetWorth`（**跨角色合计** + 分角色明细 + 缺价跨角色去重）；`NetWorthBreakdown` 增 `missingTypeIds`（具名缺价）；`assets.ts` 增 `listAssetLocationIds`；`StationNameEntry` 增 `regionId`（站点候选按区域过滤）；UI 资产页新增**净值口径控件**（区域 / 站点 / 口径 / 离群）+ **全账号合计卡** + 缺价明细展开；新增 **5** 条用例（**390** 全绿） |
 | **P5-5 采矿时薪** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 新增 `engines/mining.ts`（`computeMiningRate` 时薪测算器 + `computeMiningLedger` 账簿复盘 + **EVE 日边界** `eveDayOf` / `previousEveDay` / `EVE_DOWNTIME_UTC_HOUR`，停机 **11:00 UTC** = 北京 19:00）+ **16** 条用例；`sde/repo.ts` 增 `getSystemNames`；UI `ui/src/calc/MiningPanel.tsx`（计算页第 **6** 面板：上时薪测算器 / 下账簿复盘 + 按 EVE 日 / 月 / 矿石 / 星系四张表） |
 | **P5-6 工业成本闭环** | ✅ 完成（真机 + 真实库独立复算逐项一致） | 新增 `engines/industry.ts`（`computeIndustryReconciliation`：ESI `activity_id` → SDE 活动映射（1/3/4/5/8/11，未识别返回 null）+ 任务 × 钱包流水（`context_id_type='industry_job_id'`）关联 + **安装费「预算 vs 实际」偏差** + 材料预算（BOM × 假设 ME）→ 产出估值 → **毛利闭环**）+ **16** 条用例；`test/engines/fixtures.ts` 增 `insertIndustryJob` / `insertIndustryJournal`；UI `ui/src/calc/IndustryPanel.tsx`（计算页第 **7** 面板） |
-| P5-7~ 整合功能 | 未开始 | 提醒系统（托盘 + Webhook）+ Undercut |
+| **P5-7 提醒系统（托盘 + Webhook + Undercut）** | ✅ 完成（真机 + 本地回环 Webhook 真实收包 + 加签独立复算一致） | 迁移 **v10**（`notify_rules` 规则表）；Rust：加 `tauri-plugin-notification` + 新增 `notify.rs`（`notify_desktop` / `notify_webhook_post`）；core `notify/rules.ts`（规则 CRUD + `evaluateNotifyRules`：Undercut / 价格带 / 静默 / 冷却）+ `notify/webhook.ts`（报文 + 钉钉 HMAC 加签 + 4 种模板 + 同轮合并）+ **25** 条用例；UI 顶层「提醒」页 + `useNotifyEngine`（App 级 60s tick） |
 
 **P5-1 实测记录（2026-09-28，真实库副本迁移 + 真实 ESI 两轮全量 + 真机界面）**：
 - 静态：core **308 → 331** 用例全绿（新增 global-state 9 + global 13 + 采集器失败水位 2；移除已废弃的「区域级让路」2 条）；`tsc --noEmit`（core / ui）与 `ui build` 通过；Rust **16 + 1 ignored** 不回归（本阶段未动 Rust、未改已发布迁移）
@@ -616,10 +616,43 @@
 - **已知局限（仅声明）**：ESI 钱包流水端点只回溯 **30 天** → 更早的任务查不到关联流水（界面显示「无关联流水」）
 - **明确不做**：安装费的系统成本指数 / 设施税 / SCC 附加费拆分、材料实际采购额、公司工业任务（P3 未同步公司端点）、**LP BPC 产出估值**（用户决定**不并入本阶段**，另立项）
 
+**P5-7 实测记录（2026-09-29，真机 + 本地回环 Webhook 真实收包 + 加签独立复算）**：
+- 静态：core **422 → 447** 用例全绿（新增 `test/notify/notify.test.ts` **25** 条：静默时段 3 / 冷却 2 / 规则读写 3 / Undercut 7 / 压制 2 / 价格带 2 / 报文与加签 5 / 配置读写 1）；`tsc --noEmit`（core / ui）与 `ui build` 通过；**Rust `cargo check --no-default-features` 通过**（新增 `tauri-plugin-notification v2.5.0`）
+- **迁移 v9 → v10**：界面显示「就绪 · **schema v10** · 本次应用 **1** 个迁移 · 日志模式 wal」
+- **真实库现状**：`my_orders` **0 行**（Undercut 需注入）；`watchlist_items` **1 条**（`34 三钛合金 / The Forge`，`best_sell` 3.69 / `p5_sell` 3.8）→ 注入 **1 条合成挂单 + 2 条规则**完成验收，验完即删
+- **真机界面**（顶层「提醒」页）：
+  1. 通道区 / Undercut 规则区 / 监视价格带区 三块渲染正确，读库回显与注入一致
+  2. **界面保存落库**：填 URL `http://127.0.0.1:18080/hook` + 加签密钥 `SECp57acceptance` + 勾选启用 → 保存 → 库内 `settings.notify.webhook` = `{enabled:true,kind:"dingtalk",url:…,secret:"SECp…",mentionAll:false}` ✅
+  3. **自动 tick 生效**：应用启动后 60 秒内自动评估（`last_fired_at` 被写入；当时未配 Webhook → 走托盘）
+  4. **手动「立即检查并发送」**：命中 **2** 条（Undercut 1 + 价格带 1）→ 回执「托盘：已发送 / Webhook：已发送」
+  5. **本地回环服务器真实收包**（`POST /hook?timestamp=…&sign=…`，`content-type: application/json`），body：
+     `{"msgtype":"markdown","markdown":{"title":"EVE Suite 提醒（2 条）","text":"### EVE Suite 提醒（2 条）\n\n**⚠️ 被压价（1 条）**\n- 三钛合金 @ 伏尔戈：我的 4.5 vs 参照 3.8（+18.42%，p5_sell）\n\n**💰 监视价格带（1 条）**\n- 三钛合金 @ 伏尔戈：最低卖价 3.69，跌破下限 10\n\n> 2026-09-29T02:31:22.956Z"},"at":{"isAtAll":false}}`
+     —— **两条命中合并为一条消息** ✅（方案红线：钉钉 20 条/分钟）
+  6. **钉钉加签独立复算一致**：收到的 `sign` 与 `node:crypto` 的 `urlEncode(base64(HMAC-SHA256(secret, timestamp + "\n" + secret)))` **逐字相同** ✅
+  7. **冷却压制**：发送后立即再查 → `冷却压制 2`、命中 0（6 小时冷却生效）✅
+  8. **静默压制**：两条规则设为全天静默（0–23）并清空冷却 → 再查 → `静默压制 2`、命中 0、不发送 ✅
+  9. **「测试发送」按钮**：收到第 4 个包（`EVE Suite 提醒（1 条）` / `三钛合金（测试消息）@ The Forge`）✅
+  10. **清理后复验**：`my_orders` 1 → **0**、`notify_rules` 2 → **0**、`settings.notify.webhook` 删除 → 回到原状
+- **⚠️ 托盘通知的 dev 限制（已在开工清单预警⑨，非代码缺陷）**：界面回执「托盘：已发送」（`notify_desktop` 命令**无错误返回**），但**屏幕上未见 Toast**，且 `%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db` 中**无本次记录**（仅有 Trae 的历史通知）→ 符合 Windows 既有行为：**未安装（无 AUMID / 无开始菜单快捷方式）的应用，Toast 会被系统丢弃**。→ **列入 P6 打包后复验**
+
+**P5-7 口径（已定，经用户确认）**：
+- **触发模型 = 冷却式**：当前越界 **且**（从未触发 或 距上次触发 ≥ **6 小时**）→ 发送；等价于「越界翻转立即提醒 + 持续越界每 6h 提醒一次」，**宁可重复也不漏报**（不引入严格边沿状态列）
+- **通道**：托盘通知（无配置，v1 默认开）+ 通用 Webhook（可选）；**邮件 SMTP 不做**（方案列 v1.5）
+- **Webhook 必须在 Rust 侧发送**：机器人接口**不返回 CORS 头**，渲染进程 `fetch` 的 JSON POST 必被预检拦截 → 新增 Tauri 命令 `notify_webhook_post`（reqwest，15 秒超时，非 2xx 回执带响应体摘要）
+- **Undercut 参照价默认 `p5_sell`**（卖价 5% 分位，抗 1 ISK 钓鱼单，与全站唯一定价口径一致），可切 `best_sell`；**两端都缺价则跳过并计入 `missingPrice`**；阈值 = 百分比（默认 5%）+ 可选绝对下限（ISK）
+- **监视列表价格带用 `best_sell`**（对齐「现在能买到的最低价」这一事实量）；跌破下限 / 突破上限各自触发
+- **静默时段按规则配置**（本地时区小时，支持跨夜如 23→7）；期间**跳过发送**（不延迟、不改状态）
+- **同轮合并为一条消息**（方案红线）；**最小发送间隔 = tick 60 秒**
+- **至少一个通道成功才写 `last_fired_at`**（失败则下一轮重试）
+- **只存 webhook 地址与加签密钥**（`settings` 键 `notify.webhook`），**不存任何账号凭据**；绝不内置开发者账号
+- **规则表 `notify_rules`（v10）**：`kind ∈ {undercut, watch_price}`；undercut 至多一条；`watch_price` 一个监视条目至多一条（部分唯一索引）
+- **仅应用运行时生效**（单机固有属性，方案 §7.2）
+- **明确不做**：提醒历史表（只存 `last_fired_at` + 界面「最近检查」回显）、邮件 SMTP、Telegram / Discord 模板（留扩展）
+
 ## 数据库现状
 
-- schema 版本：**v9**（v1 settings + v2 SDE 11 表 + v3 行情 7 表 + v4 个人数据 10 表 + v5 LP 商店 3 表 + v6 类型材料 1 表 + v7 全域扫描状态 1 表 + v8 历史预拉状态 1 表 + **v9 历史 date 索引**）
-- 迁移文件：`0001-settings` `0002-sde-tables` `0003-market-tables` `0004-personal-tables` `0005-lp-tables` `0006-type-materials` `0007-market-global` `0008-history-backfill` `0009-history-date-index`（**已发布，禁止修改，只能新增**）
+- schema 版本：**v10**（v1 settings + v2 SDE 11 表 + v3 行情 7 表 + v4 个人数据 10 表 + v5 LP 商店 3 表 + v6 类型材料 1 表 + v7 全域扫描状态 1 表 + v8 历史预拉状态 1 表 + v9 历史 date 索引 + **v10 提醒规则 1 表**）
+- 迁移文件：`0001-settings` `0002-sde-tables` `0003-market-tables` `0004-personal-tables` `0005-lp-tables` `0006-type-materials` `0007-market-global` `0008-history-backfill` `0009-history-date-index` `0010-notify-rules`（**已发布，禁止修改，只能新增**）
 - v9 迁移：仅新增索引 `idx_market_history_date (date)` —— 服务全局裁剪 `DELETE ... WHERE date < ?`（**800 万行规模下避免全表扫描**）
 - v8 表：`market_history_backfill_state`（单行，主键 `id = 1` CHECK；存整轮预拉锚点 / 是否全量成功 / 待重试时刻 / 清单计数 pairs_total·ok·skipped·failed / days_written / elapsed_ms）；档位存 `settings` 的 `market.history.tier`
   - ⚠️ **既存不一致（非本轮引入）**：真实运行库该表**多一列 `requests`（NOT NULL DEFAULT 0）**，仓库 `0008` 迁移文件**没有**该列。本模块写入**显式列名且不含 `requests`**，靠默认值 0 兜住，故功能不受影响；仅提示后续若重建库需注意差异
@@ -641,7 +674,7 @@
 
 ## 下一步
 
-1. **P4 + P5-1 + P5-2 + P5-2.6 + P5-2.7 + P5-2.8 + P5-3 + P5-4 + P5-5 + P5-6 已完成**（四大引擎 + 计算器页 **7** 面板 + 全域 6 小时层 + 跨区价差视图 + 历史预拉与 400 天全量初始化 + 库存缺口分析 + 精确净值补完 + 采矿时薪 + **工业成本闭环**）。**下一项 = P5-7：提醒系统（托盘通知 + 通用 Webhook）+ Undercut 提醒**；LP BPC 产出估值待办顺延其后（单独立项）。**开工前先出「任务清单 + 验收清单」交用户确认**。
+1. **P0–P5 全部完成**（四大引擎 + 计算器页 **7** 面板 + 全域 6 小时层 + 跨区价差视图 + 历史预拉与 400 天全量初始化 + 库存缺口 + 精确净值 + 采矿时薪 + 工业成本闭环 + **提醒系统（托盘 + Webhook + Undercut）**）。**下一项 = P6 分发打磨**（内置更新器 / CCP 合规标注 / 用户文档 / Windows 代码签名 / macOS 公证，含 **P5-7 遗留的 dev 模式 Toast 复验**）；P5 剩余的 **LP BPC 产出估值**待办单独立项。**开工前先出「任务清单 + 验收清单」交用户确认**。
 2. **待推送**：本地有多个提交未推送（起点 `9130776` 起累积）；推送时机由用户掌控（推送后 CI 才会跑）
 3. 已知待办（非阻塞；凡涉及改动已有代码，均需先出方案并确认）：
    - ~~**P2 行情采集未用共享调度器**~~ **已统一（2026-09-28，P5-1-0）**：`useMarketCollector` 改为取 `initCoreRuntime()` 的共享 db / client / scheduler，枢纽层与全域层共用同一优先级队列、「让路」生效；仍未做的是「全域层与个人数据同步是否再分层限速」
@@ -661,6 +694,7 @@
    - **P5-4 遗留（均未承诺）**：① **合同不逐项估值**内物品（需 `/contracts/{id}/items` 端点 + 新表 → 属 P3 同步扩展，另立项）② **公司资产/钱包/合同**未纳入（同上）③ 净值**趋势折线图**未做（快照列表已有）④ 站点级基准**同区域多站**需用户自行选对（如吉他 `60003760`=4-4 海军组装车间 vs `60003466`=商业法庭，结果差异很大）
    - **P5-5 遗留（均未承诺）**：① 真实库 `mining_ledger` **长期 0 行** —— 真机验收靠**注入合成数据**完成，真实账簿需先在游戏内挖矿并由 P3 同步（`esi-characters.read_mining_ledger.v1`）② 速率**由用户手填**，未做「按船/装备自动推导」③ 精炼产出率沿用 P4-4 **NPC 站口径**，不含玩家建筑 rig 与建筑税 ④ 账簿「按星系」收益为**体积分摊**（合计严格相等），非逐星系独立精炼 ⑤ 未与「提醒系统 / 工业成本闭环」联动
    - **P5-6 遗留（均未承诺）**：① 真实库 `industry_jobs` **长期 0 行** —— 真机验收靠**注入合成数据**完成；真实数据需先在游戏内开工并由 P3 同步 ② **ME / TE 不可知**（ESI 不返回）→ 材料预算只能按**假设 ME** 计算 ③ **材料实际采购额无法关联**（流水的 `market_transaction` 只到交易 ID）④ 安装费只到总额，**不拆分**系统成本指数 / 设施税 / SCC 附加费 ⑤ **公司工业任务**未纳入（P3 未同步公司端点）⑥ 钱包流水端点只回溯 **30 天** → 更早任务无关联流水 ⑦ **LP BPC 产出估值**未做（用户决定另立项）
+   - **P5-7 遗留（均未承诺）**：① **dev 模式托盘 Toast 不弹**（未打包 exe 无 AUMID，Windows 直接丢弃；命令本身返回成功）→ **P6 打包后复验** ② 无提醒历史表（只存 `last_fired_at` + 界面「最近检查」回显）③ 邮件 SMTP 通道未做（方案列 v1.5）④ Telegram / Discord 模板未做（通用 webhook 已支持 `custom`，可直接自填）⑤ Undercut 只到**区域级**参照价，站点级未做 ⑥ 提醒仅**应用运行时**生效（单机固有属性）
 
 ## 踩坑备忘（重要，勿重蹈）
 
@@ -694,6 +728,10 @@
      - **`max_depths` 太小会截断 WebView 内容**：用 `max_depths: 8~10` 时主进程树里只剩无名容器（拿不到按钮 id）；改 **`max_depths: 40` + `disableDiff: true`** 就能取到主进程树内的完整 WebView 节点（`button / edit / combo-box`），随后 `click(element_id)` 生效（与「补充 4」一致）。
      - **坐标点击对 WebView2 无效（重要修正）**：`click{x,y}` 需同时传窗口根 `element_id: "0"`（否则报 `element_id: Invalid input: expected string`），但 P5-6-5 实测**返回成功、界面却不动**（P5-5-5 曾偶然可用）→ **优先 element_id 点击**，坐标仅作兜底。**滚动**同理：`scroll(element_id=可滚动 group, direction, pages)` 有效，而对 `document` 发 `perform_action scroll_page_down` **无效果**。
      - **`set_value` 是填文本的首选**：P5-5 往「采矿速率」、P5-6 往「材料效率假设」填值均一次成功（React 受控组件收到变更并重算）；`type_text` 传含全角括号的正则脚本会 `SyntaxError`，慎用。
+   - **补充 6（P5-7-7 实测，2026-09-29）**：**Windows 上「未安装」的应用发不出 Toast**
+     - `tauri dev` 的未打包 exe 调 `notify_desktop` **返回成功**，但屏幕上无弹窗，且 `%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db` 中**也无记录** —— Windows 需要**已注册的 AUMID + 开始菜单快捷方式**才会路由通知。
+     - **结论：验收托盘通知必须用打包后的安装版**；dev 阶段只能以「命令调用成功 + 界面回执」作证据（已列为 P6 复验项）。
+     - 附带：`wpndatabase.db` 可用 `node:sqlite` **只读**打开（表 `Notification`）；注意 `ArrivalTime` 是 **BIGINT**，直接 `ORDER BY` 会让 `node:sqlite` 抛 `Value is too large to be represented as a JavaScript number` → 需 `CAST(ArrivalTime AS TEXT)` 再在 JS 里用 BigInt 换算。
 11. **dev 启动失败先查端口 1420**：上一次未完全退出的 vite 会占用端口（`Stop-Process` 按占用进程清理）。
 12. **【易静默失效】`keyring` 每个平台必须「恰好启用一个」后端**：只有在「该平台适用的后端恰好一个」时才会启用它；启用多个（或零个）会**静默回落 mock 存储**（内存态、跨进程不持久）→ 症状是「测试全绿，但重启应用后令牌凭空消失」。
    - 核验手段：`cargo tree -p keyring --depth 1` 应只出现该平台的后端依赖（Windows = `windows-sys`/`byteorder`/`zeroize`）；若同时出现 `dbus-secret-service`、`linux-keyutils`，说明配置有问题。
@@ -848,6 +886,9 @@
 | **写操作瞬时锁重试（DB-1）** | `packages/core/src/db/retry.ts`（`isTransientLockError` / `retryOnBusy`）；接线在 `db/tauri.ts` |
 | **事务会话与写锁（DB-1）** | `src-tauri/src/db.rs`（`BEGIN IMMEDIATE` 会话、`db_tx_end` 先提交后移除、回滚失败丢弃连接、`TX_SESSION_TTL` 清理） |
 | **净值 / 资产查询（P5-4 补完）** | `packages/core/src/personal/networth.ts`（`computeNetWorth` 四分项，**合同轻口径**：我发起且 outstanding 的 `item_exchange` 计 `price`、我承接的 `courier` 计 `reward`、排除公司合同；`computeAccountNetWorth` **跨角色合计**）、`personal/assets.ts`（+`listAssetLocationIds`）；UI `packages/ui/src/personal/AssetsPage.tsx`（净值口径控件 / 全账号合计卡 / 缺价具名明细） |
+| **提醒规则引擎（P5-7）** | `packages/core/src/notify/rules.ts`（规则 CRUD + `evaluateNotifyRules`（Undercut / 价格带 / 静默 / 冷却）+ `WebhookConfig` 读写）、`notify/webhook.ts`（`buildNotifyMessage` 同轮合并 + `buildWebhookRequest` + 钉钉 HMAC 加签 + 4 种模板）；UI `packages/ui/src/notify/NotifyPage.tsx`（顶层「提醒」页）+ `notify/useNotifyEngine.ts`（App 级 60s tick，`notify_desktop` + 可选 `notify_webhook_post`） |
+| **提醒通道（Rust，P5-7）** | `src-tauri/src/notify.rs`（`notify_desktop` / `notify_webhook_post`）；`lib.rs` 注册 `tauri-plugin-notification` 与新命令 |
+| 迁移 0010（提醒规则，P5-7） | `packages/core/src/db/migrations/0010-notify-rules.ts`（`notify_rules` 表 + kind 索引 + 价格带部分唯一索引） |
 | Tauri 壳（命令注册） | `src-tauri/src/lib.rs` |
 | CI workflow | `.github/workflows/build.yml` |
 | 方案（唯一事实来源） | `EVE 工具套件 · 单机桌面版完整开发方案.md` |
@@ -1181,4 +1222,31 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 - 应用**已停止**；真实库 **schema v9**、1 个角色（`WEEK 813`）、`industry_jobs` **0 行**（合成数据已清理）、`wallet_journal` **3 行**（原状）
 - 核验脚本：`%TEMP%\eve-verify-p56.cjs`（`node eve-verify-p56.cjs <regionId> <me>`）、`%TEMP%\eve-p56-fixture.cjs`（`insert` / `cleanup` 合成任务与流水）、`%TEMP%\eve-p56-probe.cjs` / `probe2.cjs`（表结构与样本蓝图探测）
 - **过程教训**：本轮坐标点击对 WebView2 无效，改用 `max_depths=40` 全量树 + `element_id` 点击（已写入踩坑 #10 补充 5）
+
+## 会话纪要（2026-09-29 · P5-7 提醒系统）
+
+> 同上：仅供追溯，权威事实以「## P5 进度」为准。
+
+**该会话完成事项**
+
+| # | 事项 | 结果 | 提交 |
+|---|---|---|---|
+| 1 | 读方案 §7 提醒系统 + 核对 `notify_rules` / notification 插件 / `my_orders` / `watchlist_items` → 出「任务清单 + 验收清单」+ 10 个待定口径（含 9 条解决建议，含 dev Toast 预警） | 通过（用户「按建议」） | — |
+| 2 | **P5-7-0** Rust 接线：`tauri-plugin-notification` + `notify.rs`（`notify_desktop` / `notify_webhook_post`）；`cargo check` 通过 | 通过 | 见下 |
+| 3 | **P5-7-1** 迁移 **v10** `notify_rules`（kind / 阈值 / 价格带 / 静默 / `last_fired_at` + 2 索引） | 通过 | 见下 |
+| 4 | **P5-7-2/3** core `notify/rules.ts`（规则 CRUD + `evaluateNotifyRules`）+ `notify/webhook.ts`（报文 + 钉钉加签 + 4 模板 + 同轮合并） | 通过 | 见下 |
+| 5 | **P5-7-4** `notify.test.ts` **25** 条；core **422 → 447** 全绿 | 通过 | 见下 |
+| 6 | **P5-7-5** 顶层「提醒」页（通道配置 / Undercut 规则 / 监视价格带 / 立即检查）+ `useNotifyEngine`（App 级 60s tick） | 通过 | 见下 |
+| 7 | **P5-7-6** 静态校验（core 单测 + `tsc` core/ui + `ui build` + Rust `cargo check`） | 通过 | 见下 |
+| 8 | **P5-7-7** 真机 + 本地回环 Webhook 真实收包 + 加签独立复算：命中 2 → 合并 1 条消息 → 签名一致；冷却 / 静默 / 测试发送 全部通过；清理回原状 | 通过 | 见下 |
+| 9 | **P5-7-8** DEV_STATUS 更新 + 本地提交 | 通过 | 见下 |
+
+**关键验收证据**：见「## P5 进度」的「P5-7 实测记录 / 口径」。要点：迁移 **v10** 应用成功；Undercut（4.5 vs 参照 3.8 = **+18.42%**）+ 价格带（3.69 < 下限 10）命中并**合并为一条** Markdown 消息；**钉钉 `sign` 与 `node:crypto` 独立复算逐字一致**；冷却压制 2 / 静默压制 2 均生效。
+
+**该会话结束时的仓库 / 环境状态**
+
+- 工作区改动：`src-tauri/{Cargo.toml,Cargo.lock,src/lib.rs,src/notify.rs}`、`packages/core/src/db/migrations/{index.ts,0010-notify-rules.ts}`、`packages/core/src/notify/{index.ts,rules.ts,webhook.ts}`、`packages/core/src/index.ts`、`packages/core/test/notify/notify.test.ts`、`packages/ui/src/App.tsx`、`packages/ui/src/notify/{NotifyPage.tsx,useNotifyEngine.ts}`、`DEV_STATUS.md`；**新增迁移 v10、动了 Rust（首次）**
+- 应用**已停止**；真实库 **schema v10**、1 个角色（`WEEK 813`）、`my_orders` **0 行**、`notify_rules` **0 行**（合成数据已清理）
+- 核验脚本：`%TEMP%\eve-p57-fixture.cjs`（`insert` / `cleanup`）、`eve-p57-webhook-server.cjs <port>`（本地回环收包）、`eve-p57-verify-sign.cjs <url> <secret>`（独立复算加签）、`eve-p57-reset-fired.cjs` / `eve-p57-quiet.cjs`（冷却与静默验证辅助）、`eve-p57-toast-db.cjs`（读 Windows 通知库）
+- **已知限制（P6 复验）**：dev 模式托盘 Toast 被 Windows 丢弃（未打包 exe 无 AUMID）—— 详见踩坑 #10 补充 6
 
