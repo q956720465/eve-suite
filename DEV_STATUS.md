@@ -2645,3 +2645,49 @@ node v25.2.1 · pnpm 11.7.0 · rustc/cargo 1.98.1（项目要求 ≥ 1.85）· g
 - 应用已停止；`wal_checkpoint(TRUNCATE)` 后单文件 **1,454,125,056 字节**（`-wal`/`-shm` 已消失）
 - 工作区仍是 **21 项改动/新增（未提交）**；`main` 仍 `c58df9c`
 
+## 项目收尾（2026-10-18，用户指示「整个项目结束，做收尾工作，保存好数据」）
+
+### 数据终态（运行库，`%APPDATA%\com.eve-suite.desktop\eve-suite.db`）
+
+| 类别 | 终态 |
+|---|---|
+| 文件 | **1,454,125,056 字节** · `journal_mode=wal` · `-wal` 0 字节 · 最后修改 `2026-09-30T15:15:08Z` |
+| 完整性 | **`integrity_check = ok`** · `foreign_key_check` **0 行** · 备份副本 `quick_check = ok` |
+| schema | `schema_migrations` **12 行**（v12）；`PRAGMA user_version = 0`（版本由该表维护，非 pragma） |
+| 行情 | `market_orders` **1,550,552**（59 区）· `market_stats` **211,385**（59 区）· `market_collect_state` **70 区 / 0 错误**（最新 `2026-09-30T15:14:40Z`） |
+| 日线 | `market_history_daily` **8,404,408 行 / 36,129 pair** · 日期范围 **`2025-08-26` → `2026-09-29`** |
+| 全域扫描 | `regions_ok **65/65**` · `regions_failed 0` · `last_full_ok_at 2026-09-30T15:05:42Z` |
+| 历史初始化 | `last_started_at 2026-09-30T11:42:28Z` · **`last_finished_at = null`（可续跑）** · `last_full_ok_at 2026-09-29T18:21:06Z` · 无错误 · 锚点 `2026-09-30T11:42:28Z` |
+| 个人 / 静态数据 | `characters 1` · `personal_sync_state 8` · `wallet_journal 23` · `lp_offers 1,585` · `lp_balances 6` · `networth_snapshots 2` · SDE：`sde_types 53,065` / `sde_type_materials 47,080` / `sde_blueprints 5,082` 等 |
+
+### 数据备份（本轮新建）
+
+| 项 | 值 |
+|---|---|
+| 路径 | `C:\Users\Administrator\Documents\EVE-Suite-Backup\eve-suite-20261018-211942.db` |
+| 大小 | 1,454,125,056 字节（与运行库一致） |
+| SHA256 | `5E5BFEDC394CA54C279F8D3627F0D34669BB11E7190EB2BCDB51870F2C0F8836`（与源文件**一致**） |
+| 可用性 | 以只读方式打开并 `quick_check` → **ok** |
+| 恢复方法 | 停止应用后，用该文件覆盖运行库（同目录 `-wal`/`-shm` 一并删除），再启动 |
+
+### 代码终态
+
+- `main = 05ace49`，**与 `origin/main` 同步**；工作区干净（除本节文档改动）
+- 三平台 CI **run `39128778669` 全绿**（windows / linux / macos-universal 均 success；`release (tag only)` skipped 属预期）
+- 本轮入库：`4e095b0`（E1 只写变化行 / B1 有界并发 / C1 初始化真独占）· `7a0ac58`（取数改走 Rust HTTP/1.1 + 30s 超时）· `05ace49`（文档）
+- 测试终态：core **47 文件 / 546 用例** · Rust **19 passed + 1 ignored** · UI `tsc` + `build` 通过
+
+### 收尾清理
+
+- 应用**已停止**（无 `eve-suite` 进程）；WAL 已 `checkpoint(TRUNCATE)`
+- 仓库内无临时文件；验证脚本均在 `%TEMP%`（`eve-*.cjs`），1.4 GB 的基准副本库已删除
+- 本轮 shell 工具曾报 `Toolhost terminal commands must be routed through the agent runtime`，改用 `integrated_code_mode` 的 `Shell` 完成校验/备份（不影响结果）
+
+### 遗留 / 未做（供下次接续）
+
+1. **P6-5 打包冒烟**（按用户指示挂起）；签名私钥 `TAURI_SIGNING_PRIVATE_KEY` 仍需用户配置
+2. **C1 未实测项**：等待中点「取消」的完整路径、空闲时点初始化「立即开始」
+3. 可选优化：**1a** 值数组 IPC（diff 读载荷 −60%）· **1b** 覆盖索引；**A** CI 加 `paths-ignore` 避免纯文档提交空跑
+4. 初始化可续跑（`last_finished_at = null`，锚点 `2026-09-30T11:42:28Z`）；全域层下一轮在 `last_full_ok_at` 后 6 h 触发
+5. 其它产品级未做项见「未做项目总览」
+
