@@ -9,8 +9,8 @@
  */
 
 import {
-  createFetchHttpClient,
   createFetchTokenHttp,
+  createTauriHttpClient,
   EsiClient,
   EVE_CLIENT_ID,
   OAuthTokenStore,
@@ -59,7 +59,10 @@ export async function initCoreRuntime(): Promise<CoreRuntime> {
       tokenHttp,
       store: tokenStore,
     });
-    const esiClient = new EsiClient({ http: createFetchHttpClient(), auth: tokenManager });
+    // ESI 请求走 Rust（HTTP/1.1）：Chromium 对 https 必然协商 h2，而实测 ESI 的 h2
+    // 路径对大响应慢 ~14 倍（orders 页 237 KB：h1 1.26 s vs h2 17.5 s）。
+    // 需要回退到渲染进程 fetch 时，把下一行换成 createFetchHttpClient() 即可。
+    const esiClient = new EsiClient({ http: createTauriHttpClient(), auth: tokenManager });
     const syncer = new PersonalSyncer({ db, client: esiClient, scheduler });
 
     runtime = {

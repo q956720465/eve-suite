@@ -1,6 +1,6 @@
 import {
   addWatchItem,
-  createFetchHttpClient,
+  createTauriHttpClient,
   EsiClient,
   getDailyHistory,
   getOrderBook,
@@ -43,11 +43,11 @@ export default function MarketPage({
   const [history, setHistory] = useState<PricePoint[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  // 按需查询用的依赖（与采集分离，避免互相阻塞）
+  // 按需查询用的依赖（与采集分离，避免互相阻塞）；HTTP 同样走 Rust（HTTP/1.1）
   const depsRef = useRef<{ client: EsiClient; scheduler: RequestScheduler } | null>(null);
   useEffect(() => {
     depsRef.current = {
-      client: new EsiClient({ http: createFetchHttpClient() }),
+      client: new EsiClient({ http: createTauriHttpClient() }),
       scheduler: new RequestScheduler({ requestsPerSecond: 6, burst: 12, maxConcurrent: 3 }),
     };
   }, []);

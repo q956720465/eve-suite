@@ -1,4 +1,5 @@
 mod db;
+mod esi_http;
 mod notify;
 mod oauth;
 mod sde;
@@ -26,6 +27,7 @@ pub fn run() {
             db::db_select,
             db::db_tx_begin,
             db::db_tx_end,
+            esi_http::esi_http_get,
             sde::sde_cache_dir,
             sde::sde_http_get_text,
             sde::sde_download,

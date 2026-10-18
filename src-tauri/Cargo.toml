@@ -30,8 +30,12 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 # 数据库：自管 sqlx SQLite 连接池（原 tauri-plugin-sql 的 JS API 无事务能力，已退役）
 sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio"] }
-# SDE 下载与解压（P1）：reqwest 走 rustls 免系统 OpenSSL 依赖；zip 仅需 deflate
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
+# SDE 下载与解压（P1）、ESI 拉取（2026-09-30）：
+# - rustls 免系统 OpenSSL 依赖；zip 仅需 deflate
+# - **不开 http2**（保持 default-features = false）：实测 ESI 的 h2 路径对大响应慢 ~14 倍，
+#   渲染进程（Chromium 必走 h2）因此被拖死 → ESI 改由 Rust 发请求（src/esi_http.rs）
+# - gzip：ESI 的 orders 页 gzip 后传输量大幅下降（渲染进程 fetch 原先即自动带 gzip）
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "gzip"] }
 futures-util = "0.3.34"
 zip = { version = "4", default-features = false, features = ["deflate"] }
 # net/time：P3-1 OAuth 本地回环监听（TcpListener）与回调超时

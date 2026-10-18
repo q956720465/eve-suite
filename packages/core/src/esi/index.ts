@@ -25,6 +25,7 @@ export { DEFAULT_ESI_BASE_URL, EsiClient, parseCacheControl } from './client';
 export type { EsiAuthProvider, EsiClientOptions, EsiRequestOptions } from './client';
 
 export { createFetchHttpClient, createFetchTokenHttp } from './fetch-http';
+export { createTauriHttpClient } from './tauri-http';
 
 export {
   buildAuthorizeUrl,
@@ -91,3 +92,4 @@ export type { QueueStats, RequestPriority, SchedulerOptions } from './scheduler'
 
 export { fetchAllPages } from './paging';
 export type { FetchAllPagesOptions, FetchAllPagesResult, PageFetcher } from './paging';
+export { PAGE_FETCH_CONCURRENCY, mapWithLimit } from './concurrency';
