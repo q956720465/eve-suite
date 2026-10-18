@@ -1,3 +1,4 @@
+import { PAGE_FETCH_CONCURRENCY, mapWithLimit } from './concurrency';
 import type { EsiCacheControl, EsiResult } from './types';
 
 /**
@@ -64,11 +65,11 @@ export async function fetchAllPages<T>(
   if (first.notModified) notModifiedPages += 1;
 
   if (totalPages > 1) {
-    const rest = await Promise.all(
-      Array.from({ length: totalPages - 1 }, (_, index) => index + 2).map(async (page) => ({
-        page,
-        result: await fetch(page, true),
-      })),
+    // 有界并发（原为一次性入队全部页）：控制内存峰值，并避免共享调度器的队列被本管道长期占满
+    const rest = await mapWithLimit(
+      Array.from({ length: totalPages - 1 }, (_, index) => index + 2),
+      PAGE_FETCH_CONCURRENCY,
+      async (page) => ({ page, result: await fetch(page, true) }),
     );
     for (const { page, result } of rest) {
       pages[page - 1] = result.notModified ? null : (result.data ?? []);

@@ -1,13 +1,20 @@
 import type { DbAdapter } from '../db/types';
 import type { EsiClient } from '../esi/client';
 import { systemClock, type Clock } from '../esi/clock';
+import { PAGE_FETCH_CONCURRENCY, mapWithLimit } from '../esi/concurrency';
 import type { RequestScheduler } from '../esi/scheduler';
 import type { EsiResult, MarketOrder } from '../esi/types';
 import { insertRows } from '../sde/batch';
 
 import { loadEtags, ordersPageScope, saveEtags } from './etag-cache';
 import { MAX_PAGES_PER_REGION, TRADE_HUBS } from './hubs';
-import { ORDER_COLUMNS, STATS_COLUMNS, WRITE_BATCH_ROWS, toOrderRow, toStatsRow } from './rows';
+import {
+  ORDER_COMPARE_COLUMNS,
+  applyRegionOrderDiff,
+  planRegionOrderDiff,
+  type RegionOrderDiffPlan,
+} from './order-diff';
+import { STATS_COLUMNS, WRITE_BATCH_ROWS, toOrderRow, toStatsRow } from './rows';
 import { computeMarketStats } from './stats';
 
 export interface CollectRegionResult {
@@ -118,9 +125,12 @@ export class MarketCollector {
     if (totalPages > 1) {
       const pageNumbers = Array.from({ length: totalPages - 1 }, (_, index) => index + 2);
       let completed = 1;
-      const fetched = await Promise.all(
-        pageNumbers.map(async (page) => ({ page, result: await this.fetchPage(regionId, page) })),
-      );
+      // 有界并发（原先一次性入队 400+ 页）：既压内存峰值，也避免 hub 队列长期非空
+      // 把共享调度器的派发额度全占走（其余管道按严格优先级会被饿死）
+      const fetched = await mapWithLimit(pageNumbers, PAGE_FETCH_CONCURRENCY, async (page) => ({
+        page,
+        result: await this.fetchPage(regionId, page),
+      }));
       for (const { page, result } of fetched) {
         pages[page - 1] = result.notModified ? null : (result.data ?? []);
         if (result.notModified) notModifiedPages += 1;
@@ -154,9 +164,10 @@ export class MarketCollector {
       .map((page, index) => (page === null ? index + 1 : 0))
       .filter((page) => page > 0);
     if (refillPages.length > 0) {
-      const refilled = await Promise.all(
-        refillPages.map(async (page) => ({ page, result: await this.fetchPage(regionId, page, true) })),
-      );
+      const refilled = await mapWithLimit(refillPages, PAGE_FETCH_CONCURRENCY, async (page) => ({
+        page,
+        result: await this.fetchPage(regionId, page, true),
+      }));
       for (const { page, result } of refilled) {
         pages[page - 1] = result.data ?? [];
       }
@@ -181,12 +192,22 @@ export class MarketCollector {
     );
     const statsRows: unknown[][] = stats.map(toStatsRow);
 
+    // E1：事务外读本地旧快照（不持写锁）→ 只写「变化行」。
+    // 实测相邻两轮 order_id 留存 99.6%、内容变化 2.1% → 写事务从 ~19 s 降到 ~0.5 s，
+    // 从而不再让个人同步 / 历史初始化卡在 BEGIN IMMEDIATE 上（详见 order-diff.ts 头注释）。
+    const existingRows = await this.db.select<Record<string, unknown>>(
+      `SELECT ${ORDER_COMPARE_COLUMNS.join(', ')} FROM market_orders WHERE region_id = ?`,
+      [regionId],
+    );
+    const plan: RegionOrderDiffPlan =
+      existingRows.length === 0
+        ? { vanishedOrderIds: [], upsertRows: orderRows, unchangedCount: 0 }
+        : planRegionOrderDiff(existingRows, uniqueOrders, regionId, fetchedAt);
+    /** 本轮实际写入的行数（E1 后 = 新增 + 内容变化；首次 / 本地无数据时为全量） */
+    const orderRowsWritten = plan.upsertRows.length;
+
     await this.db.transaction(async (tx) => {
-      await tx.execute('DELETE FROM market_orders WHERE region_id = ?', [regionId]);
-      await insertRows(tx, 'market_orders', ORDER_COLUMNS, orderRows, WRITE_BATCH_ROWS, {
-        target: ['order_id'],
-        update: ORDER_COLUMNS.filter((column) => column !== 'order_id'),
-      });
+      await applyRegionOrderDiff(tx, regionId, plan);
 
       await tx.execute('DELETE FROM market_stats WHERE region_id = ?', [regionId]);
       await insertRows(tx, 'market_stats', STATS_COLUMNS, statsRows, WRITE_BATCH_ROWS);
@@ -196,12 +217,12 @@ export class MarketCollector {
         regionId,
         pages: totalPages,
         requests,
-        ordersWritten: orderRows.length,
+        ordersWritten: orderRowsWritten,
         lastError: null,
       });
     });
 
-    this.reportProgress(regionId, totalPages, totalPages, 'done', orderRows.length);
+    this.reportProgress(regionId, totalPages, totalPages, 'done', orderRowsWritten);
 
     return {
       regionId,
@@ -209,7 +230,7 @@ export class MarketCollector {
       requests,
       notModifiedPages,
       skipped: false,
-      ordersWritten: orderRows.length,
+      ordersWritten: orderRowsWritten,
       statsWritten: statsRows.length,
       elapsedMs: this.clock.now() - startedAt,
       error: null,

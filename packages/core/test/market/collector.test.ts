@@ -126,13 +126,66 @@ describe('枢纽层采集器', () => {
     const result = await collector.collectRegion(REGION);
 
     expect(result.skipped).toBe(false);
-    expect(result.ordersWritten).toBe(2);
+    // E1（2026-09-30）：本轮只有 order 2 内容变化（9 → 8），order 1 逐列一致被跳过 → 只写 1 行
+    expect(result.ordersWritten).toBe(1);
     expect(await countRows(db, 'market_orders')).toBe(2);
 
-    const changed = await db.select<{ price: number }>(
-      'SELECT price FROM market_orders WHERE order_id = 2',
+    const rows = await db.select<{ order_id: number; price: number }>(
+      'SELECT order_id, price FROM market_orders ORDER BY order_id',
     );
-    expect(changed[0].price).toBe(8);
+    // 跳过的行保持原值（price 5），变化的行已更新 → 最终内容与「全量替换」等价
+    expect(rows).toEqual([
+      { order_id: 1, price: 5 },
+      { order_id: 2, price: 8 },
+    ]);
+  });
+
+  it('E1：只写变化行，且被跳过的行 fetched_at 保持上一轮（证明未重写）', async () => {
+    const { db, http, collector } = await setup();
+    http.enqueue(
+      jsonResponse(
+        200,
+        [
+          order({ order_id: 1, type_id: 34, price: 5, is_buy_order: false }),
+          order({ order_id: 2, type_id: 34, price: 6, is_buy_order: true }),
+          order({ order_id: 3, type_id: 35, price: 7, is_buy_order: false }),
+        ],
+        { 'x-pages': '1', etag: 'W/"r1"' },
+      ),
+    );
+    const first = await collector.collectRegion(REGION);
+    expect(first.ordersWritten).toBe(3);
+
+    const before = await db.select<{ order_id: number; fetched_at: string }>(
+      'SELECT order_id, fetched_at FROM market_orders ORDER BY order_id',
+    );
+
+    // 次轮：order 1 不变、order 2 变价、order 3 消失、order 4 新增
+    http.enqueue(
+      jsonResponse(
+        200,
+        [
+          order({ order_id: 1, type_id: 34, price: 5, is_buy_order: false }),
+          order({ order_id: 2, type_id: 34, price: 6.5, is_buy_order: true }),
+          order({ order_id: 4, type_id: 36, price: 8, is_buy_order: false }),
+        ],
+        { 'x-pages': '1', etag: 'W/"r2"' },
+      ),
+    );
+    const second = await collector.collectRegion(REGION);
+
+    // 写入 = 变化 1 行 + 新增 1 行（消失的 1 行走删除）
+    expect(second.ordersWritten).toBe(2);
+    const after = await db.select<{ order_id: number; price: number; fetched_at: string }>(
+      'SELECT order_id, price, fetched_at FROM market_orders ORDER BY order_id',
+    );
+    expect(after.map((row) => row.order_id)).toEqual([1, 2, 4]);
+    expect(after.find((row) => row.order_id === 2)?.price).toBe(6.5);
+    // 未变化行（order 1）的 fetched_at 未被刷新 —— 说明它根本不在写入集合里
+    const firstFetchedAt = before.find((row) => row.order_id === 1)?.fetched_at;
+    expect(after.find((row) => row.order_id === 1)?.fetched_at).toBe(firstFetchedAt);
+    // 变化行的 fetched_at 已刷新
+    expect(after.find((row) => row.order_id === 2)?.fetched_at).not.toBe(firstFetchedAt);
   });
 
   it('采集失败：记录错误且保留既有数据', async () => {

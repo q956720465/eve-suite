@@ -25,8 +25,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { initCoreRuntime } from '../core/runtime';
 
-/** 等待在途采集轮次收尾的最长时间（枢纽轮次可达 4~5 分钟） */
-const WAIT_IDLE_TIMEOUT_MS = 5 * 60_000;
+/** 等待在途采集轮次收尾的轮询间隔（同时用于刷新「已等待 Xs」文案） */
 const WAIT_IDLE_POLL_MS = 1_000;
 
 /** 最近一次观察到的 ESI 配额头（用于确认能否再提档，以及错误预算安全） */
@@ -87,11 +86,24 @@ function describeSummary(summary: HistoryInitSummary): string {
   return parts.join(' · ');
 }
 
-/** 轮询等待在途采集轮次收尾；超时或取消则提前返回 */
-async function waitForIdle(isBusy: () => boolean, isAborted: () => boolean): Promise<void> {
-  const deadline = Date.now() + WAIT_IDLE_TIMEOUT_MS;
-  while (isBusy() && Date.now() < deadline && !isAborted()) {
+/**
+ * 轮询等待在途采集轮次收尾；**不设超时**，只有「取消」能中止。
+ *
+ * 为什么不设超时（原为 5 分钟超时后放行）：超时放行等于**自愿进入共存态** ——
+ * 采集的大事务（整区替换，实测单区 DELETE 就 7.4 s）会长时间独占 SQLite 写锁，
+ * 此后的初始化批写全部排队在 `BEGIN IMMEDIATE` 上（实测等待 1.6~11 s，并多次撞满
+ * busy_timeout=10 s），吞吐从 12.9 pair/s 掉到 0.5 pair/s。宁可让用户多等一会儿
+ * （界面显示已等待时长且可取消），也不要静默进入这种状态。
+ */
+async function waitForIdle(
+  isBusy: () => boolean,
+  isAborted: () => boolean,
+  onTick: (waitedSeconds: number) => void,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (isBusy() && !isAborted()) {
     await new Promise<void>((resolve) => setTimeout(resolve, WAIT_IDLE_POLL_MS));
+    onTick(Math.round((Date.now() - startedAt) / 1000));
   }
 }
 
@@ -151,10 +163,13 @@ export function useHistoryInit(options: HistoryInitHookOptions): HistoryInitHand
       // 独占：先暂停（轮级），再等在途轮次收尾
       optionsRef.current.pauseCollection();
       optionsRef.current.pausePersonalSync();
-      setMessage('已暂停采集与个人同步，等待在途轮次收尾…');
+      const waitingMessage = (waited: number): string =>
+        `已暂停采集与个人同步，等待在途轮次收尾…（已等待 ${waited} 秒，可点「取消」退出）`;
+      setMessage(waitingMessage(0));
       await waitForIdle(
         () => optionsRef.current.isCollectionBusy(),
         () => abortRef.current,
+        (waited) => setMessage(waitingMessage(waited)),
       );
       if (abortRef.current) {
         setMessage('初始化已取消（在开始前）');

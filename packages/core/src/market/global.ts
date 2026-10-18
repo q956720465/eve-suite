@@ -1,6 +1,7 @@
 import type { DbAdapter } from '../db/types';
 import type { EsiClient } from '../esi/client';
 import { systemClock, type Clock } from '../esi/clock';
+import { PAGE_FETCH_CONCURRENCY, mapWithLimit } from '../esi/concurrency';
 import type { RequestScheduler } from '../esi/scheduler';
 import type { EsiResult, MarketOrder } from '../esi/types';
 import { insertRows } from '../sde/batch';
@@ -19,7 +20,13 @@ import {
   type GlobalScanTier,
 } from './global-state';
 import { MAX_PAGES_PER_REGION } from './hubs';
-import { ORDER_COLUMNS, STATS_COLUMNS, WRITE_BATCH_ROWS, toOrderRow, toStatsRow } from './rows';
+import {
+  ORDER_COMPARE_COLUMNS,
+  applyRegionOrderDiff,
+  planRegionOrderDiff,
+  type RegionOrderDiffPlan,
+} from './order-diff';
+import { STATS_COLUMNS, WRITE_BATCH_ROWS, toOrderRow, toStatsRow } from './rows';
 import { computeMarketStats } from './stats';
 
 /** 单个区域的全域采集结果 */
@@ -265,9 +272,10 @@ export class GlobalMarketScanner {
       if (totalPages > 1) {
         const pageNumbers = Array.from({ length: totalPages - 1 }, (_, index) => index + 2);
         let completed = 1;
-        const fetched = await Promise.all(
-          pageNumbers.map(async (page) => ({ page, result: await this.fetchPage(regionId, page) })),
-        );
+        const fetched = await mapWithLimit(pageNumbers, PAGE_FETCH_CONCURRENCY, async (page) => ({
+          page,
+          result: await this.fetchPage(regionId, page),
+        }));
         for (const { page, result } of fetched) {
           if (result.notModified) {
             throw new Error('收到意外的 304（全域层未发条件请求）');
@@ -293,12 +301,19 @@ export class GlobalMarketScanner {
       const orderRows = uniqueOrders.map((order) => toOrderRow(order, regionId, fetchedAt));
       const statsRows = stats.map(toStatsRow);
 
+      // E1：与枢纽层同源（见 order-diff.ts）——事务外读旧快照，事务内只写变化行
+      const existingRows = await this.db.select<Record<string, unknown>>(
+        `SELECT ${ORDER_COMPARE_COLUMNS.join(', ')} FROM market_orders WHERE region_id = ?`,
+        [regionId],
+      );
+      const plan: RegionOrderDiffPlan =
+        existingRows.length === 0
+          ? { vanishedOrderIds: [], upsertRows: orderRows, unchangedCount: 0 }
+          : planRegionOrderDiff(existingRows, uniqueOrders, regionId, fetchedAt);
+      const ordersWritten = plan.upsertRows.length;
+
       await this.db.transaction(async (tx) => {
-        await tx.execute('DELETE FROM market_orders WHERE region_id = ?', [regionId]);
-        await insertRows(tx, 'market_orders', ORDER_COLUMNS, orderRows, WRITE_BATCH_ROWS, {
-          target: ['order_id'],
-          update: ORDER_COLUMNS.filter((column) => column !== 'order_id'),
-        });
+        await applyRegionOrderDiff(tx, regionId, plan);
 
         await tx.execute('DELETE FROM market_stats WHERE region_id = ?', [regionId]);
         await insertRows(tx, 'market_stats', STATS_COLUMNS, statsRows, WRITE_BATCH_ROWS);
@@ -308,18 +323,18 @@ export class GlobalMarketScanner {
           now,
           pages: totalPages,
           requests,
-          ordersWritten: orderRows.length,
+          ordersWritten,
           lastError: null,
         });
       });
 
-      this.reportProgress(regionId, ctx, totalPages, totalPages, 'done', orderRows.length);
+      this.reportProgress(regionId, ctx, totalPages, totalPages, 'done', ordersWritten);
 
       return {
         regionId,
         pages: totalPages,
         requests,
-        ordersWritten: orderRows.length,
+        ordersWritten,
         statsWritten: statsRows.length,
         elapsedMs: this.clock.now() - startedAt,
         error: null,

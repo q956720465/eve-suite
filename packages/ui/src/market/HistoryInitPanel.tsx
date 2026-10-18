@@ -64,7 +64,8 @@ export default function HistoryInitPanel({ init }: { init: HistoryInitHandle }) 
 
       <p className="hint">
         把 5 枢纽「卖单数或买单数 ≥5」的物品日线历史补满到 <strong>400 天</strong>。
-        <strong>仅手动触发</strong>；运行期间会<strong>暂停采集、全域扫描与个人同步</strong>并把请求临时提档，
+        <strong>仅手动触发</strong>；开始前会<strong>等当前采集轮次收尾</strong>（等待期间显示已等待时长、可取消），
+        运行期间会<strong>暂停采集、全域扫描与个人同步</strong>并把请求临时提档，
         结束后自动恢复。中断（关应用 / 取消）后可继续，已完成部分不会重拉。
       </p>
 
